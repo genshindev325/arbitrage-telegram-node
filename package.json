@@ -1,4 +1,9 @@
 {
+  "name": "arbitrage-bot",
+  "version": "1.0.0",
+  "description": "A bot to detect arbitrage opportunities and send alerts via Telegram.",
+  "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },

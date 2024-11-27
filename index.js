@@ -1,22 +1,11 @@
-const ccxt = require('ccxt');
-const TelegramBot = require('node-telegram-bot-api');
-const _ = require('lodash');
-const { TELEGRAM_API_KEY, TELEGRAM_CHAT_ID, MIN_SPREAD, MIN_VOLUME } = require('./config');
+import ccxt from 'ccxt';
+import TelegramBot from 'node-telegram-bot-api';
+import _ from 'lodash';
+import { TELEGRAM_API_KEY, TELEGRAM_CHAT_ID, MIN_SPREAD, MIN_VOLUME, BUFFER_EXPIRY_TIME, ARBITRAGE_PERCENTAGE_THRESHOLD } from "./config.js";
 
-// Divide pairs into smaller chunks to avoid rate-limiting
-BATCH_SIZE = 10
-
-// Convert rate limit to seconds, important
-EXCHANGE_RATE = 40000.0
-
-// Add delay between batches, important
-GATE_RATE = 40000.0
-
-// Max thread counts
-MAX_WORKERS = 10
-
-// Telegram has a message length limit of 4096 characters.
-MAX_ALERTS_PER_MESSAGE = 10
+const BATCH_SIZE = 10;
+const EXCHANGE_RATE = 40000.0;
+const opportunityBuffer = {};
 
 // Helper function to chunk arrays
 function chunkify(array, size) {
@@ -44,7 +33,7 @@ async function fetchOrderBooks(exchange, pairs) {
 }
 
 // Calculate spreads
-function calculateSpread(orderBooksA, orderBooksB) {
+function calculateSpread(orderBooksA, orderBooksB, exchangeAName, exchangeBName) {
   const spreads = [];
 
   for (const pair in orderBooksA) {
@@ -59,8 +48,8 @@ function calculateSpread(orderBooksA, orderBooksB) {
       const spreadAB = ((bidsB[0] - asksA[0]) / asksA[0]) * 100;
       const spreadBA = ((bidsA[0] - asksB[0]) / asksB[0]) * 100;
 
-      spreads.push({ pair, direction: 'A->B', spread: spreadAB, buyPrice: asksA[0], sellPrice: bidsB[0] });
-      spreads.push({ pair, direction: 'B->A', spread: spreadBA, buyPrice: asksB[0], sellPrice: bidsA[0] });
+      spreads.push({ pair, direction: `${exchangeAName}->${exchangeBName}`, spread: spreadAB, buyPrice: asksA[0], sellPrice: bidsB[0] });
+      spreads.push({ pair, direction: `${exchangeBName}->${exchangeAName}`, spread: spreadBA, buyPrice: asksB[0], sellPrice: bidsA[0] });
     }
   }
 
@@ -74,9 +63,35 @@ function filterActivePairs(orderBooks) {
     }
     return filtered;
   }, {});
+}// Check if an opportunity should be notified
+function shouldNotifyOpportunity(pair, newPercentage) {
+  const now = Date.now();
+
+  if (!opportunityBuffer[pair]) {
+    // If the pair is not in the buffer, notify
+    return true;
+  }
+
+  const { lastPercentage, lastTimestamp } = opportunityBuffer[pair];
+
+  const timeElapsed = now - lastTimestamp;
+  const percentageChange = newPercentage - lastPercentage;
+
+  // Notify if time interval has passed or percentage threshold is exceeded
+  return (
+    timeElapsed > BUFFER_EXPIRY_TIME ||
+    percentageChange >= ARBITRAGE_PERCENTAGE_THRESHOLD
+  );
 }
 
-// Main function
+// Update the buffer with the latest data
+function updateOpportunityBuffer(pair, percentage) {
+  opportunityBuffer[pair] = {
+    lastPercentage: percentage,
+    lastTimestamp: Date.now(),
+  };
+}
+
 async function executeArbitrageCheck() {
   // Initialize Telegram bot
   const bot = new TelegramBot(TELEGRAM_API_KEY, { polling: false });
@@ -99,7 +114,6 @@ async function executeArbitrageCheck() {
     console.log(`Markets loaded in ${(Date.now() - marketStartTime) / 1000}s`);
     console.log(`Number of common trading pairs (futures): ${commonPairs.length}`);
 
-    const alerts = [];
     const batches = chunkify(commonPairs, BATCH_SIZE);
 
     // Fetch order books in batches
@@ -109,7 +123,7 @@ async function executeArbitrageCheck() {
       const orderBooksMexc = filterActivePairs(await fetchOrderBooks(mexc, batch));
 
       // Calculate spreads
-      const spreads = calculateSpread(orderBooksGate, orderBooksMexc);
+      const spreads = calculateSpread(orderBooksGate, orderBooksMexc, 'GATE', 'MEXC');
 
       // Collect opportunities
       for (const { pair, spread, direction, buyPrice, sellPrice } of spreads) {
@@ -120,38 +134,28 @@ async function executeArbitrageCheck() {
           );
 
           if (maxVolume >= MIN_VOLUME) {
-            const profit = (spread * maxVolume * buyPrice) / 100;
-            console.log(`Alert added for ${pair}: Spread: ${spread}%, Profit: ${profit}`);
-            alerts.push(
-              `Coin: ${pair}\n` +
-              `Direction: ${direction}\n` +
-              `Spread: ${spread.toFixed(2)}%\n` +
-              `Max Volume: ${maxVolume.toFixed(2)}\n` +
-              `Potential Profit: ${profit.toFixed(2)} USDT\n` +
-              `Links:\n` +
-              `- Gate: https://www.gate.io/futures/USDT/${pair.replace('/', '_').replace(':USDT', '')}\n` +
-              `- MEXC: https://www.mexc.com/futures/USDT/${pair.replace('/', '_').replace(':USDT', '')}\n` +
-              `------------------------------------------`
-            );
+            if (shouldNotifyOpportunity(pair, spread)) {
+              const profit = maxVolume * Math.abs(buyPrice - sellPrice);
+              console.log(`Alert sent for ${pair}: Spread: ${spread}%, Profit: ${profit}`);
+              const message =
+                `Coin: ${pair}\n` +
+                `Direction: ${direction}\n` +
+                `Spread: ${spread.toFixed(2)}%\n` +
+                `Max Volume: ${maxVolume.toFixed(2)}\n` +
+                `Potential Profit: ${profit.toFixed(2)} USDT\n` +
+                `Links:\n` +
+                `- Gate: https://www.gate.io/futures/USDT/${pair.replace('/', '_').replace(':USDT', '')}\n` +
+                `- MEXC: https://futures.mexc.com/exchange/${pair.replace('/', '_').replace(':USDT', '')}\n` +
+                `------------------------------------------`
+              ;
+              await bot.sendMessage(TELEGRAM_CHAT_ID, message, {disable_web_page_preview: true});
+              updateOpportunityBuffer(pair, spread);
+            }
           }
         }
       }
     }
     console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
-
-    // Send alerts in batches
-    const sendStartTime = Date.now();
-    if (alerts.length) {
-      const alertChunks = chunkify(alerts, MAX_ALERTS_PER_MESSAGE);
-      for (const chunk of alertChunks) {
-        const message = `🔥 Arbitrage Opportunities Found!\n\n${chunk.join('\n\n')}`;
-        await bot.sendMessage(TELEGRAM_CHAT_ID, message);
-      }
-      console.log("Summary alert sent.");
-    } else {
-      console.log("No arbitrage opportunities found!");
-    }
-    console.log(`Alerts sent in ${(Date.now() - sendStartTime) / 1000}s`);
   } catch (err) {
     console.error("An error occurred:", err.message);
   }
