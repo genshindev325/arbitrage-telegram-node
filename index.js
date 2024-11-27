@@ -1,16 +1,17 @@
+const fs = require('fs');
+const readline = require('readline');
 const ccxt = require('ccxt');
 const TelegramBot = require('node-telegram-bot-api');
 const _ = require('lodash');
-const { TELEGRAM_API_KEY, TELEGRAM_CHAT_ID, MIN_SPREAD, MIN_VOLUME } = require('./config');
 
 // Divide pairs into smaller chunks to avoid rate-limiting
 BATCH_SIZE = 10
 
 // Convert rate limit to seconds, important
-EXCHANGE_RATE = 50000.0
+EXCHANGE_RATE = 40000.0
 
 // Add delay between batches, important
-GATE_RATE = 50000.0
+GATE_RATE = 40000.0
 
 // Max thread counts
 MAX_WORKERS = 10
@@ -21,12 +22,47 @@ SYMBOL_COUNTS = 2000
 // Telegram has a message length limit of 4096 characters.
 MAX_ALERTS_PER_MESSAGE = 10
 
-// Initialize Telegram bot
-const bot = new TelegramBot(TELEGRAM_API_KEY, { polling: false });
+// File to save configuration
+const CONFIG_FILE = './TelegramBot_Config.json';
 
 // Helper function to chunk arrays
 function chunkify(array, size) {
   return _.chunk(array, size);
+}
+
+// Function to prompt for user input
+const promptInput = (query) => {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+    });
+
+    return new Promise((resolve) => rl.question(query, (answer) => {
+        rl.close();
+        resolve(answer.trim());
+    }));
+};
+
+// Function to load or prompt for configuration
+async function loadConfig() {
+    if (fs.existsSync(CONFIG_FILE)) {
+        const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+        console.log("Configuration loaded successfully.");
+        return config;
+    } else {
+        console.log("Configuration file not found. Please enter the following details:");
+        const TELEGRAM_API_KEY = await promptInput('Input TELEGRAM_API_KEY: ');
+        const MIN_SPREAD = await promptInput('Input Minimum Percentage for Spread: ');
+        const MIN_VOLUME = await promptInput('Input Minimum Volume: ');
+        const TELEGRAM_CHAT_ID = await promptInput('Input TELEGRAM_CHAT_ID: ');
+
+        const config = { TELEGRAM_API_KEY, MIN_SPREAD, MIN_VOLUME, TELEGRAM_CHAT_ID };
+
+        // Save the configuration for future runs
+        fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 4), 'utf-8');
+        console.log("Configuration saved to TelegramBot_Config.json.");
+        return config;
+    }
 }
 
 // Fetch order books concurrently
@@ -84,11 +120,16 @@ function filterActivePairs(orderBooks) {
 
 // Main function
 (async function main() {
+  const config = await loadConfig();
+  const { TELEGRAM_API_KEY, MIN_SPREAD, MIN_VOLUME, TELEGRAM_CHAT_ID } = config;
+
+  // Initialize Telegram bot
+  const bot = new TelegramBot(TELEGRAM_API_KEY, { polling: false });
+
   console.log("Starting the bot...");
   const scriptStartTime = Date.now();
 
   // Initialize exchanges
-  // const gate = new ccxt.gateio({ options: { defaultType: 'future' } });
   const gate = new ccxt.gateio();
   const mexc = new ccxt.mexc();
 
