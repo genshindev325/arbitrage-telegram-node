@@ -157,19 +157,16 @@ async function executeArbitrageCheck() {
   }
 };
 
-let interval;
-
 (async function main() {
   console.log("Bot started.");
-  await executeArbitrageCheck();
-
-  interval = setInterval(async () => {
+  
+  while (true) {
     await executeArbitrageCheck();
-  }, 3 * 60 * 1000);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
-  process.on('SIGINT', () => {
-    console.log("\nStopping the bot...");
-    clearInterval(interval);
-    process.exit(0);
-  });
+    process.on('SIGINT', () => {
+      console.log("\nStopping the bot...");
+      process.exit(0);
+    });
+  }
 })();
