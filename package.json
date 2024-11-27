@@ -1,4 +1,7 @@
 {
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
     "ccxt": "^4.4.34",
     "dotenv": "^16.4.5",
