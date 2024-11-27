@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "ccxt": "^4.4.34",
+    "dotenv": "^16.4.5",
+    "lodash": "^4.17.21",
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}
