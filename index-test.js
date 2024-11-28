@@ -14,12 +14,8 @@ import {
 } from "./config.js";
 
 const opportunityBuffer = {};
-const BATCH_SIZE = Math.min(Math.max(proxies.length, 10), MAX_PROCESS_COUNT);
-process.setMaxListeners(MAX_PROCESS_COUNT);
 
-function chunkify(array, size) {
-  return _.chunk(array, size);
-}
+process.setMaxListeners(MAX_PROCESS_COUNT);
 
 async function fetchOrderBooks(exchange, pairs, proxyAgent) {
   const orderBooks = {};
@@ -124,20 +120,19 @@ async function executeArbitrageCheck() {
   const mexc = new ccxt.mexc();
 
   try {
-    // await gate.loadMarkets({ options: { defaultType: 'future' } });
-    // await mexc.loadMarkets({ options: { defaultType: 'future' } });
+    // Load markets for Gate.io and MEXC
     await Promise.all([gate.loadMarkets(), mexc.loadMarkets()]);
+
     const gateSymbols = Object.keys(gate.markets);
     const mexcSymbols = Object.keys(mexc.markets);
 
-    // Filter futures pairs
-    console.log("Loading markets...");
-    const marketStartTime = Date.now();
+    // Filter spot and futures pairs for Gate and MEXC
     const gateSpotSymbols = gateSymbols.filter(symbol => symbol.endsWith('/USDT') && !symbol.includes(':'));
     const gateFutureSymbols = gateSymbols.filter((symbol) => symbol.includes('/USDT:'));
     const mexcSpotSymbols = mexcSymbols.filter((symbol) => symbol.endsWith('/USDT') && !symbol.includes(':'));
     const mexcFutureSymbols = mexcSymbols.filter((symbol) => symbol.includes('/USDT:'));
 
+    // Identify common pairs between spot and futures for Gate and MEXC
     const PairsGateSGateF = gateSpotSymbols.filter(spotSymbol => {
       const futuresSymbol = spotSymbol.replace('/USDT', '/USDT:USDT');
       return gateFutureSymbols.includes(futuresSymbol);
@@ -152,51 +147,47 @@ async function executeArbitrageCheck() {
     });
     const PairsMexcSGateF = mexcSpotSymbols.filter(spotSymbol => {
       const futuresSymbol = spotSymbol.replace('/USDT', '/USDT:USDT');
-      return mexcFutureSymbols.includes(futuresSymbol);
-    })
+      return gateFutureSymbols.includes(futuresSymbol);
+    });
     const PairsGateFMexcF = _.intersection(gateFutureSymbols, mexcFutureSymbols);
-    const batches = chunkify(PairsGateFMexcF, BATCH_SIZE);
 
-    console.log(`Markets loaded in ${(Date.now() - marketStartTime) / 1000}s`);
-    console.log(`Number of common trading pairs (Gate-spot / Gate-futures): ${PairsGateSGateF.length}`);
-    console.log(`Number of common trading pairs (Gate-spot / Mexc-futures): ${PairsGateSMexcF.length}`);
-    console.log(`Number of common trading pairs (Mexc-spot / Mexc-futures): ${PairsMexcSMexcF.length}`);
-    console.log(`Number of common trading pairs (Mexc-spot / Gate-futures): ${PairsMexcSGateF.length}`);
-    console.log(`Number of common trading pairs (Gate-futures / Mexc-futures): ${PairsGateFMexcF.length}`);
+    console.log("Markets loaded...");
+
+    // Start fetching order books in parallel for the first 5 pairs
+    const pairsToProcess = [
+      { pairs: PairsGateSGateF, gate: gate, mexc: null, gateName: 'GATE', mexcName: null },
+      { pairs: PairsGateSMexcF, gate: gate, mexc: mexc, gateName: 'GATE', mexcName: 'MEXC' },
+      { pairs: PairsMexcSMexcF, gate: null, mexc: mexc, gateName: null, mexcName: 'MEXC' },
+      { pairs: PairsMexcSGateF, gate: gate, mexc: mexc, gateName: 'GATE', mexcName: 'MEXC' },
+      { pairs: PairsGateFMexcF, gate: gate, mexc: mexc, gateName: 'GATE', mexcName: 'MEXC' }
+    ];
 
     const fetchStartTime = Date.now();
-    for (const batch of batches) {
-      let orderBooksGate = [];
-      let orderBooksMexc = [];
 
-      await Promise.all([
-        orderBooksGate = filterActivePairs(await fetchOrderBooks(gate, batch, proxies[0])),
-        orderBooksMexc = filterActivePairs(await fetchOrderBooks(mexc, batch, proxies[1]))
-      ])
-  
-      const profits = calculateProfit(orderBooksGate, orderBooksMexc, 'GATE', 'MEXC');
-  
-      for (const { pair, spread, direction, buyPrice, sellPrice, maxVolume, profit } of profits) {
-        if (shouldNotifyOpportunity(pair, spread)) {
-          console.log(`Alert sent for ${pair}: Spread: ${spread}%, Profit: ${profit}`);
-          const message =
-            `Coin: ${pair}\n` +
-            `Direction: ${direction}\n` +
-            `Spread: ${spread.toFixed(2)}%\n` +
-            `Buy Price: ${buyPrice}\n` +
-            `Sell Price: ${sellPrice}\n` +
-            `Max Volume: ${maxVolume.toFixed(2)}\n` +
-            `Potential Profit: ${profit.toFixed(2)} USDT\n` +
-            `Links:\n` +
-            `- Gate: https://www.gate.io/futures/USDT/${pair.replace('/', '_').replace(':USDT', '')}\n` +
-            `- MEXC: https://futures.mexc.com/exchange/${pair.replace('/', '_').replace(':USDT', '')}\n` +
-            `------------------------------------------`
-          ;
-          await bot.sendMessage(TELEGRAM_CHAT_ID, message, {disable_web_page_preview: true});
-          updateOpportunityBuffer(pair, spread);
+    await Promise.all(
+      pairsToProcess.map(async ({ pairs, gate, mexc, gateName, mexcName }) => {
+        let orderBooksGate = [];
+        let orderBooksMexc = [];
+
+        if (gate && pairs.length > 0) {
+          orderBooksGate = filterActivePairs(await fetchOrderBooks(gate, pairs, proxies[0]));
         }
-      }
-    }
+
+        if (mexc && pairs.length > 0) {
+          orderBooksMexc = filterActivePairs(await fetchOrderBooks(mexc, pairs, proxies[1]));
+        }
+
+        const profits = calculateProfit(orderBooksGate, orderBooksMexc, gateName, mexcName);
+
+        for (const { pair, spread, direction, buyPrice, sellPrice, maxVolume, profit } of profits) {
+          if (shouldNotifyOpportunity(pair, spread)) {
+            const message = `Coin: ${pair}\nDirection: ${direction}\nSpread: ${spread.toFixed(2)}%\nBuy Price: ${buyPrice}\nSell Price: ${sellPrice}\nMax Volume: ${maxVolume.toFixed(2)}\nPotential Profit: ${profit.toFixed(2)} USDT\nLinks:\n- Gate: https://www.gate.io/futures/USDT/${pair.replace('/', '_').replace(':USDT', '')}\n- Mexc: https://futures.mexc.com/exchange/${pair.replace('/', '_').replace(':USDT', '')}\n------------------------------------------`;
+            await bot.sendMessage(TELEGRAM_CHAT_ID, message, { disable_web_page_preview: true });
+            updateOpportunityBuffer(pair, spread);
+          }
+        }
+      })
+    );
     console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
   } catch (err) {
     console.error("An error occurred:", err.message);
