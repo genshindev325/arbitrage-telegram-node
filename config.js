@@ -1,6 +1,6 @@
 export const TELEGRAM_API_KEY = '7527533762:AAFL5xUrpYlSRGVBUg3rypxmDFJfr7ErU3g';
 export const TELEGRAM_CHAT_ID = '7273835466';
-export const MIN_SPREAD = 0.001;
+export const MIN_SPREAD = 0.1;
 export const MIN_VOLUME = 100;
 export const BUFFER_EXPIRY_TIME = 5 * 60 * 1000;
 export const ARBITRAGE_PERCENTAGE_THRESHOLD = 0.00005;

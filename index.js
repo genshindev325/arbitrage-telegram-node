@@ -27,58 +27,39 @@ function getNextProxy() {
   return proxies[currentProxyIndex];
 }
 
-// { pairs: PairsGateSGateF, exchangeA: gate, exchangeB: gate, exchangeAName: 'GATE-SPOT', exchangeBName: 'GATE-FUTURE' },
-// { pairs: PairsGateSMexcF, exchangeA: gate, exchangeB: mexc, exchangeAName: 'GATE-SPOT', exchangeBName: 'MEXC-FUTURE' },
-// { pairs: PairsMexcSMexcF, exchangeA: mexc, exchangeB: mexc, exchangeAName: 'MEX-SPOT, exchangeBName: 'MEXC-FUTURE' },
-// { pairs: PairsMexcSGateF, exchangeA: mexc, exchangeB: gate, exchangeAName: 'MEXC-SPOT', exchangeBName: 'GATE-FUTURE' },
-// { pairs: PairsGateFMexcF, exchangeA: gate, exchangeB: mexc, exchangeAName: 'GATE-FUTURE', exchangeBName: 'MEXC-FUTURE' }
-
-// orderBooksA = filterActivePairs(await fetchOrderBooks(exchangeA, batch(pairs), exchangeB, exchangeAName)),
-// orderBooksB = filterActivePairs(await fetchOrderBooks(exchangeB, batch(pairs), exchangeA, exchangeAName))
 async function fetchOrderBooks(exchange, pairs, exchangeBuyName, exchangeSellName, proxy) {
   const orderBooks = {};
-  // await Promise.all(
-  //   pairs.map(async (pair) => {
-    for (const pair of pairs) {
+  await Promise.all(
+    pairs.map(async (pair) => {
+    // for (const pair of pairs) {
       try {
-        // const proxyAgent = getNextProxy();
+        const proxyAgent = getNextProxy();
         let orderBook = {};
         exchange.socksProxy = proxy;
         if (exchangeBuyName.includes('FUTURE') && exchangeSellName.includes('SPOT')) {
-          orderBook = await exchange.fetchOrderBook(pair.replace('/USDT', '/USDT:USDT')); 
+          orderBook = await exchange.fetchOrderBook(pair.replace('/USDT', '/USDT:USDT'));
         } else {
-          orderBook = await exchange.fetchOrderBook(pair); 
+          orderBook = await exchange.fetchOrderBook(pair);
         }
         orderBooks[pair] = orderBook;
       } catch (err) {
         console.error(`Error fetching order book for ${pair}:`, err.message);
       }
-    }
-  //   })
-  // );
+    // }
+    })
+  );
   return orderBooks;
 }
 
-// { pairs: PairsGateSGateF, exchangeA: gate, exchangeB: gate, exchangeAName: 'GATE-SPOT', exchangeBName: 'GATE-FUTURE' },
-// { pairs: PairsGateSMexcF, exchangeA: gate, exchangeB: mexc, exchangeAName: 'GATE-SPOT', exchangeBName: 'MEXC-FUTURE' },
-// { pairs: PairsMexcSMexcF, exchangeA: mexc, exchangeB: mexc, exchangeAName: 'MEX-SPOT, exchangeBName: 'MEXC-FUTURE' },
-// { pairs: PairsMexcSGateF, exchangeA: mexc, exchangeB: gate, exchangeAName: 'MEXC-SPOT', exchangeBName: 'GATE-FUTURE' },
-// { pairs: PairsGateFMexcF, exchangeA: gate, exchangeB: mexc, exchangeAName: 'GATE-FUTURE', exchangeBName: 'MEXC-FUTURE' }
 function calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName) {
   const profits = [];
 
   for (const pair in orderBooksA) {
-    let comparePair = pair;
-    if (exchangeAName.includes('SPOT') && exchangeBName.includes('FUTURE')) {
-      comparePair = pair.replace('/USDT', '/USDT:USDT');
-    } else if (exchangeAName.includes('FUTURE') && exchangeBName.includes('SPOT')) {
-      comparePair = pair.replace(':USDT', '');
-    }
-    if (orderBooksB[comparePair]) {
+    if (orderBooksB[pair]) {
       const asksA = orderBooksA[pair]?.asks[0];
-      const bidsB = orderBooksB[comparePair]?.bids[0];
+      const bidsB = orderBooksB[pair]?.bids[0];
       const bidsA = orderBooksA[pair]?.bids[0];
-      const asksB = orderBooksB[comparePair]?.asks[0];
+      const asksB = orderBooksB[pair]?.asks[0];
 
       if (!asksA || !bidsB || !bidsA || !asksB) continue;
 
@@ -205,7 +186,7 @@ async function executeArbitrageCheck() {
     }
     
     // Split each array into 10 parts
-    const numParts = 10;
+    const numParts = 5;
     const pairsGateFMexcFChunks = chunkArray(PairsGateFMexcF, numParts);
     const pairsGateSGateFChunks = chunkArray(PairsGateSGateF, numParts);
     const pairsGateSMexcFChunks = chunkArray(PairsGateSMexcF, numParts);
@@ -214,32 +195,41 @@ async function executeArbitrageCheck() {
     
     // Create pairsToProcess with chunks
     const pairsToProcess = [];
+    // const pairsToProcess = [
+      // { pairs: PairsGateFMexcF, exchangeA: gate, exchangeB: mexc, exchangeAName: 'GATE-FUTURE', exchangeBName: 'MEXC-FUTURE' },
+      // { pairs: PairsGateSGateF, exchangeA: gate, exchangeB: gate, exchangeAName: 'GATE-SPOT', exchangeBName: 'GATE-FUTURE' },
+      // { pairs: PairsGateSMexcF, exchangeA: gate, exchangeB: mexc, exchangeAName: 'GATE-SPOT', exchangeBName: 'MEXC-FUTURE' },
+      // { pairs: PairsMexcSMexcF, exchangeA: mexc, exchangeB: mexc, exchangeAName: 'MEXC-SPOT', exchangeBName: 'MEXC-FUTURE' },
+      // { pairs: PairsMexcSGateF, exchangeA: mexc, exchangeB: gate, exchangeAName: 'MEXC-SPOT', exchangeBName: 'GATE-FUTURE' }
+    // ];
     
     for (let i = 0; i < numParts; i++) {
       pairsToProcess.push([
         { pairs: pairsGateFMexcFChunks[i], exchangeA: gate, exchangeB: mexc, exchangeAName: 'GATE-FUTURE', exchangeBName: 'MEXC-FUTURE' },
-        // { pairs: pairsGateSGateFChunks[i], exchangeA: gate, exchangeB: gate, exchangeAName: 'GATE-SPOT', exchangeBName: 'GATE-FUTURE' },
-        // { pairs: pairsGateSMexcFChunks[i], exchangeA: gate, exchangeB: mexc, exchangeAName: 'GATE-SPOT', exchangeBName: 'MEXC-FUTURE' },
-        // { pairs: pairsMexcSMexcFChunks[i], exchangeA: mexc, exchangeB: mexc, exchangeAName: 'MEXC-SPOT', exchangeBName: 'MEXC-FUTURE' },
-        // { pairs: pairsMexcSGateFChunks[i], exchangeA: mexc, exchangeB: gate, exchangeAName: 'MEXC-SPOT', exchangeBName: 'GATE-FUTURE' }
+        { pairs: pairsGateSGateFChunks[i], exchangeA: gate, exchangeB: gate, exchangeAName: 'GATE-SPOT', exchangeBName: 'GATE-FUTURE' },
+        { pairs: pairsGateSMexcFChunks[i], exchangeA: gate, exchangeB: mexc, exchangeAName: 'GATE-SPOT', exchangeBName: 'MEXC-FUTURE' },
+        { pairs: pairsMexcSMexcFChunks[i], exchangeA: mexc, exchangeB: mexc, exchangeAName: 'MEXC-SPOT', exchangeBName: 'MEXC-FUTURE' },
+        { pairs: pairsMexcSGateFChunks[i], exchangeA: mexc, exchangeB: gate, exchangeAName: 'MEXC-SPOT', exchangeBName: 'GATE-FUTURE' }
       ]);
     }
 
+    const aaaa = [1, 2, 3, 4, 5]
+
     const fetchStartTime = Date.now();
     await Promise.all(
-      proxies.map(async (proxy, index) => {
-        await Promise.all(
-          pairsToProcess[index].map(async ({ pairs, exchangeA, exchangeB, exchangeAName, exchangeBName }) => {
-          // for (const { pairs, exchangeA, exchangeB, exchangeAName, exchangeBName } of pairsToProcess[index]) {
-            const batches = chunkify(pairs, BATCH_SIZE);
+      aaaa.map(async (_, index) => {
+        // await Promise.all(
+          // pairsToProcess[index].map(async ({ pairs, exchangeA, exchangeB, exchangeAName, exchangeBName }) => {
+          for (const { pairs, exchangeA, exchangeB, exchangeAName, exchangeBName } of pairsToProcess[index]) {
+            const batches = chunkify(pairs, 2);
             for (const batch of batches) {
               let orderBooksA = [];
               let orderBooksB = [];
         
               const fetchStartTime = Date.now();
               await Promise.all([
-                orderBooksA = filterActivePairs(await fetchOrderBooks(exchangeA, batch, exchangeAName, exchangeBName, proxy)),
-                orderBooksB = filterActivePairs(await fetchOrderBooks(exchangeB, batch, exchangeBName, exchangeAName, proxy))
+                orderBooksA = filterActivePairs(await fetchOrderBooks(exchangeA, batch, exchangeAName, exchangeBName, proxies[(index * 2) % proxies.length])),
+                orderBooksB = filterActivePairs(await fetchOrderBooks(exchangeB, batch, exchangeBName, exchangeAName, proxies[(index * 2 + 1) % proxies.length]))
               ])
               console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
           
@@ -266,14 +256,14 @@ async function executeArbitrageCheck() {
                 }
               }
             }
-          // }
-          })
-        )
+          }
+          // })
+        // )
+      // })
+    // )
+    console.log(`total calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
       })
     )
-    console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
-    //   })
-    // )
   } catch (err) {
     console.error("An error occurred:", err.message);
   }
