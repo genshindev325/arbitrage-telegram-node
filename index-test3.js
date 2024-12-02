@@ -1,5 +1,6 @@
 import ccxt from 'ccxt';
 import TelegramBot from 'node-telegram-bot-api';
+import { SocksProxyAgent } from 'socks-proxy-agent';
 import _ from 'lodash';
 import {
   TELEGRAM_API_KEY,
@@ -13,6 +14,7 @@ import {
 } from "./config.js";
 
 const opportunityBuffer = {};
+let currentProxyIndex = -1;
 const BATCH_SIZE = Math.min(Math.max(proxies.length, 10), MAX_PROCESS_COUNT);
 process.setMaxListeners(MAX_PROCESS_COUNT);
 
@@ -20,11 +22,18 @@ function chunkify(array, size) {
   return _.chunk(array, size);
 }
 
+function getNextProxy() {
+  currentProxyIndex = (currentProxyIndex + 1) % proxies.length;
+  return proxies[currentProxyIndex];
+}
+
 async function fetchOrderBooks(exchange, pairs, exchangeBuyName, exchangeSellName, proxy) {
   const orderBooks = {};
   await Promise.all(
     pairs.map(async (pair) => {
+    // for (const pair of pairs) {
       try {
+        const proxyAgent = getNextProxy();
         let orderBook = {};
         exchange.socksProxy = proxy;
         if (exchangeBuyName.includes('FUTURE') && exchangeSellName.includes('SPOT')) {
@@ -36,6 +45,7 @@ async function fetchOrderBooks(exchange, pairs, exchangeBuyName, exchangeSellNam
       } catch (err) {
         console.error(`Error fetching order book for ${pair}:`, err.message);
       }
+    // }
     })
   );
   return orderBooks;
@@ -64,8 +74,8 @@ function calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName)
       const maxVolumeAB = Math.min(buyVolumeA, sellVolumeB);
       const maxVolumeBA = Math.min(buyVolumeB, sellVolumeA);
 
-      const profitAB = maxVolumeAB * spreadAB / 100;
-      const profitBA = maxVolumeBA * spreadBA / 100;
+      const profitAB = maxVolumeAB * Math.abs(bidsB[0] - asksA[0]);
+      const profitBA = maxVolumeBA * Math.abs(bidsA[0] - asksB[0]);
 
       if (spreadAB >= MIN_SPREAD && maxVolumeAB >= MIN_VOLUME) {
         profits.push({
@@ -129,6 +139,8 @@ async function executeArbitrageCheck() {
   const mexc = new ccxt.mexc();
 
   try {
+    // await gate.loadMarkets({ options: { defaultType: 'future' } });
+    // await mexc.loadMarkets({ options: { defaultType: 'future' } });
     await Promise.all([gate.loadMarkets(), mexc.loadMarkets()]);
     const gateSymbols = Object.keys(gate.markets);
     const mexcSymbols = Object.keys(mexc.markets);
@@ -182,7 +194,15 @@ async function executeArbitrageCheck() {
     const pairsMexcSGateFChunks = chunkArray(PairsMexcSGateF, numParts);
     
     // Create pairsToProcess with chunks
-    const pairsToProcess = [];    
+    const pairsToProcess = [];
+    // const pairsToProcess = [
+      // { pairs: PairsGateFMexcF, exchangeA: gate, exchangeB: mexc, exchangeAName: 'GATE-FUTURE', exchangeBName: 'MEXC-FUTURE' },
+      // { pairs: PairsGateSGateF, exchangeA: gate, exchangeB: gate, exchangeAName: 'GATE-SPOT', exchangeBName: 'GATE-FUTURE' },
+      // { pairs: PairsGateSMexcF, exchangeA: gate, exchangeB: mexc, exchangeAName: 'GATE-SPOT', exchangeBName: 'MEXC-FUTURE' },
+      // { pairs: PairsMexcSMexcF, exchangeA: mexc, exchangeB: mexc, exchangeAName: 'MEXC-SPOT', exchangeBName: 'MEXC-FUTURE' },
+      // { pairs: PairsMexcSGateF, exchangeA: mexc, exchangeB: gate, exchangeAName: 'MEXC-SPOT', exchangeBName: 'GATE-FUTURE' }
+    // ];
+    
     for (let i = 0; i < numParts; i++) {
       pairsToProcess.push([
         { pairs: pairsGateFMexcFChunks[i], exchangeA: gate, exchangeB: mexc, exchangeAName: 'GATE-FUTURE', exchangeBName: 'MEXC-FUTURE' },
@@ -198,44 +218,50 @@ async function executeArbitrageCheck() {
     const fetchStartTime = Date.now();
     await Promise.all(
       aaaa.map(async (_, index) => {
-        for (const { pairs, exchangeA, exchangeB, exchangeAName, exchangeBName } of pairsToProcess[index]) {
-          const batches = chunkify(pairs, 2);
-          for (const batch of batches) {
-            let orderBooksA = [];
-            let orderBooksB = [];
-      
-            const fetchStartTime = Date.now();
-            await Promise.all([
-              orderBooksA = filterActivePairs(await fetchOrderBooks(exchangeA, batch, exchangeAName, exchangeBName, proxies[(index * 2) % proxies.length])),
-              orderBooksB = filterActivePairs(await fetchOrderBooks(exchangeB, batch, exchangeBName, exchangeAName, proxies[(index * 2 + 1) % proxies.length]))
-            ])
-            console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
+        // await Promise.all(
+          // pairsToProcess[index].map(async ({ pairs, exchangeA, exchangeB, exchangeAName, exchangeBName }) => {
+          for (const { pairs, exchangeA, exchangeB, exchangeAName, exchangeBName } of pairsToProcess[index]) {
+            const batches = chunkify(pairs, 2);
+            for (const batch of batches) {
+              let orderBooksA = [];
+              let orderBooksB = [];
         
-            const profits = calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName);
-        
-            for (const { pair, spread, direction, buyPrice, sellPrice, maxVolume, profit } of profits) {
-              if (shouldNotifyOpportunity(pair, spread)) {
-                console.log(`Alert sent for ${pair}: Spread: ${spread}%, Profit: ${profit}`);
-                const message =
-                  `Coin: ${pair}\n` +
-                  `Direction: ${direction}\n` +
-                  `Spread: ${spread.toFixed(2)}%\n` +
-                  `Buy Price: ${buyPrice}\n` +
-                  `Sell Price: ${sellPrice}\n` +
-                  `Max Volume: ${maxVolume.toFixed(2)}\n` +
-                  `Potential Profit: ${profit.toFixed(2)} USDT\n` +
-                  `Links:\n` +
-                  `- Gate: https://www.gate.io/futures/USDT/${pair.replace('/', '_').replace(':USDT', '')}\n` +
-                  `- MEXC: https://futures.mexc.com/exchange/${pair.replace('/', '_').replace(':USDT', '')}\n` +
-                  `------------------------------------------`
-                ;
-                await bot.sendMessage(TELEGRAM_CHAT_ID, message, {disable_web_page_preview: true});
-                updateOpportunityBuffer(pair, spread);
+              const fetchStartTime = Date.now();
+              await Promise.all([
+                orderBooksA = filterActivePairs(await fetchOrderBooks(exchangeA, batch, exchangeAName, exchangeBName, proxies[(index * 2) % proxies.length])),
+                orderBooksB = filterActivePairs(await fetchOrderBooks(exchangeB, batch, exchangeBName, exchangeAName, proxies[(index * 2 + 1) % proxies.length]))
+              ])
+              console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
+          
+              const profits = calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName);
+          
+              for (const { pair, spread, direction, buyPrice, sellPrice, maxVolume, profit } of profits) {
+                if (shouldNotifyOpportunity(pair, spread)) {
+                  console.log(`Alert sent for ${pair}: Spread: ${spread}%, Profit: ${profit}`);
+                  const message =
+                    `Coin: ${pair}\n` +
+                    `Direction: ${direction}\n` +
+                    `Spread: ${spread.toFixed(2)}%\n` +
+                    `Buy Price: ${buyPrice}\n` +
+                    `Sell Price: ${sellPrice}\n` +
+                    `Max Volume: ${maxVolume.toFixed(2)}\n` +
+                    `Potential Profit: ${profit.toFixed(2)} USDT\n` +
+                    `Links:\n` +
+                    `- Gate: https://www.gate.io/futures/USDT/${pair.replace('/', '_').replace(':USDT', '')}\n` +
+                    `- MEXC: https://futures.mexc.com/exchange/${pair.replace('/', '_').replace(':USDT', '')}\n` +
+                    `------------------------------------------`
+                  ;
+                  await bot.sendMessage(TELEGRAM_CHAT_ID, message, {disable_web_page_preview: true});
+                  updateOpportunityBuffer(pair, spread);
+                }
               }
             }
           }
-        }
-        console.log(`total calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
+          // })
+        // )
+      // })
+    // )
+    console.log(`total calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
       })
     )
   } catch (err) {
