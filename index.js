@@ -155,7 +155,7 @@ async function filterPerDayVolume(exchange, pairs) {
     // Fetch tickers for all pairs
     const tickers = await exchange.fetchTickers(validPairs);
     // Filter pairs with volume greater than MIN_DAY_VOLUME
-    const filteredPairs = pairs.filter(pair => {
+    const filteredPairs = validPairs.filter(pair => {
       const ticker = tickers[pair];
       return ticker && ticker.baseVolume && ticker.baseVolume > MIN_24_VOLUME;
     });
