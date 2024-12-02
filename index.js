@@ -255,6 +255,7 @@ async function executeArbitrageCheck(exA, exB) {
 
           const batchA = await filterPerDayVolume(exchangeA, batch);
           const batchB = await filterPerDayVolume(exchangeB, batch);
+          if (batchA.length === 0 || batchB.length === 0) continue;
           
           const fetchStartTime = Date.now();
           await Promise.all([
