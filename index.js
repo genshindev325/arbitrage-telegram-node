@@ -24,8 +24,20 @@ function chunkify(array, size) {
   return _.chunk(array, size);
 }
 
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+async function fetchWithRetry(fn, retries = 3, delay = 1000) {
+  let attempts = 0;
+  while (attempts < retries) {
+    try {
+      return await fn();
+    } catch (err) {
+      attempts++;
+      if (attempts >= retries) {
+        throw err; // If all retries fail, propagate the error
+      }
+      console.log(`Retrying... (${attempts}/${retries})`);
+      await new Promise(resolve => setTimeout(resolve, delay)); // Wait before retrying
+    }
+  }
 }
 
 async function fetchOrderBooks(exchange, pairs, exchangeBuyName, exchangeSellName, proxy) {
@@ -36,18 +48,27 @@ async function fetchOrderBooks(exchange, pairs, exchangeBuyName, exchangeSellNam
     pairs.map(async (pair) => {
       try {
         let orderBook = {};
-        // console.log(await exchange.fetch('https://api.ipify.org/'));
-        if (exchange.symbols.includes(pair) && exchangeBuyName.includes('FUTURE') && exchangeSellName.includes('SPOT')) {
-          orderBook = await exchange.fetchOrderBook(pair.replace('/USDT', '/USDT:USDT'));
-        } else if(exchange.symbols.includes(pair)) {
-          orderBook = await exchange.fetchOrderBook(pair);
-        }
+        const fetchOrderBook = async () => {
+          if (
+            exchange.symbols.includes(pair) &&
+            exchangeBuyName.includes('FUTURE') &&
+            exchangeSellName.includes('SPOT')
+          ) {
+            return await exchange.fetchOrderBook(pair.replace('/USDT', '/USDT:USDT'));
+          } else if (exchange.symbols.includes(pair)) {
+            return await exchange.fetchOrderBook(pair);
+          }
+          throw new Error(`Symbol ${pair} not supported`);
+        };
+
+        orderBook = await fetchWithRetry(fetchOrderBook, 3, 1000); // Retry 3 times with 1 second delay
         orderBooks[pair] = orderBook;
       } catch (err) {
         console.error(`Error fetching order book for ${pair}:`, err.message);
       }
     })
   );
+
   return orderBooks;
 }
 
@@ -120,27 +141,27 @@ function filterActivePairs(orderBooks) {
 
 async function filterPerDayVolume(exchange, pairs) {
   try {
-      // Step 1: Fetch available markets on the exchange
-      const markets = await exchange.loadMarkets();
+    // Step 1: Fetch available markets on the exchange
+    const markets = await exchange.loadMarkets();
 
-      // Step 2: Filter out pairs that are not supported by the exchange
-      const validPairs = pairs.filter(pair => markets[pair]);
+    // Step 2: Filter out pairs that are not supported by the exchange
+    const validPairs = pairs.filter(pair => markets[pair]);
 
-      if (validPairs.length === 0) {
-          console.log("No valid pairs found for the exchange.");
-          return [];
-      }
+    if (validPairs.length === 0) {
+      console.log("No valid pairs found for the exchange.");
+      return [];
+    }
 
-      // Fetch tickers for all pairs
-      const tickers = await exchange.fetchTickers(validPairs);
-      // Filter pairs with volume greater than MIN_DAY_VOLUME
-      const filteredPairs = pairs.filter(pair => {
-          const ticker = tickers[pair];
-          return ticker && ticker.baseVolume && ticker.baseVolume > MIN_24_VOLUME;
-      });
-      return filteredPairs;
+    // Fetch tickers for all pairs
+    const tickers = await exchange.fetchTickers(validPairs);
+    // Filter pairs with volume greater than MIN_DAY_VOLUME
+    const filteredPairs = pairs.filter(pair => {
+      const ticker = tickers[pair];
+      return ticker && ticker.baseVolume && ticker.baseVolume > MIN_24_VOLUME;
+    });
+    return filteredPairs;
   } catch (error) {
-      console.error("Error fetching or filtering pairs:", error);
+    console.error("Error fetching or filtering pairs:", error);
   }
 }
 
@@ -169,7 +190,7 @@ async function executeArbitrageCheck(exA, exB) {
   const exchangePlateA = new ccxt.gateio();
   const exchangePlateB = new ccxt.mexc({
     // 'rateLimit' : 100,
-    'enableRateLimit' : false
+    'enableRateLimit': false
   });
 
   try {
@@ -216,7 +237,7 @@ async function executeArbitrageCheck(exA, exB) {
         array.slice(index * chunkSize, (index + 1) * chunkSize)
       );
     }
-    
+
     // Split each array into 10 parts
     const numParts = 5;
     const PairsExAFExBFChunks = chunkArray(PairsExAFExBF, numParts);
@@ -224,9 +245,9 @@ async function executeArbitrageCheck(exA, exB) {
     const PairsExASExBFChunks = chunkArray(PairsExASExBF, numParts);
     const PairsExBSExBFChunks = chunkArray(PairsExBSExBF, numParts);
     const PairsExBSExAFChunks = chunkArray(PairsExBSExAF, numParts);
-    
+
     // Create pairsToProcess with chunks
-    const pairsToProcess = [];    
+    const pairsToProcess = [];
     for (let i = 0; i < numParts; i++) {
       pairsToProcess.push([
         { pairs: PairsExAFExBFChunks[i], exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-FUTURE`, exchangeBName: `${exB}-FUTURE` },
@@ -238,7 +259,7 @@ async function executeArbitrageCheck(exA, exB) {
     }
 
     const pairsToProcessTest = [
-      { pairs: PairsExAFExBF, exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-FUTURE`, exchangeBName: `${exB}-FUTURE`, proxyA: proxies[0], proxyB: proxies[1]},
+      { pairs: PairsExAFExBF, exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-FUTURE`, exchangeBName: `${exB}-FUTURE`, proxyA: proxies[0], proxyB: proxies[1] },
       { pairs: PairsExASExAF, exchangeA: exchangePlateA, exchangeB: exchangePlateA, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exA}-FUTURE`, proxyA: proxies[2], proxyB: proxies[3] },
       { pairs: PairsExASExBF, exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exB}-FUTURE`, proxyA: proxies[4], proxyB: proxies[5] },
       { pairs: PairsExBSExBF, exchangeA: exchangePlateB, exchangeB: exchangePlateB, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exB}-FUTURE`, proxyA: proxies[6], proxyB: proxies[7] },
@@ -256,14 +277,14 @@ async function executeArbitrageCheck(exA, exB) {
           const batchA = await filterPerDayVolume(exchangeA, batch);
           const batchB = await filterPerDayVolume(exchangeB, batch);
           if (batchA.length === 0 || batchB.length === 0) continue;
-          
+
           const fetchStartTime = Date.now();
           await Promise.all([
             orderBooksA = filterActivePairs(await fetchOrderBooks(exchangeA, batchA, exchangeAName, exchangeBName, proxyA)),
             orderBooksB = filterActivePairs(await fetchOrderBooks(exchangeB, batchB, exchangeBName, exchangeAName, proxyB))
           ])
           console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
-      
+
           const profits = calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName);
 
           for (const { pair, spread, direction, exchangeA, exchangeB, buyPrice, sellPrice, maxVolume, profit } of profits) {
@@ -281,8 +302,8 @@ async function executeArbitrageCheck(exA, exB) {
                 `- ${exchangeA}: ${EXCHANGE_URLS[exchangeA]}` + `${pair.replace('/', '_').replace(':USDT', '')}\n` +
                 `- ${exchangeB}: ${EXCHANGE_URLS[exchangeB]}` + `${pair.replace('/', '_').replace(':USDT', '')}\n` +
                 `------------------------------------------`
-              ;
-              await bot.sendMessage(TELEGRAM_CHAT_ID, message, {disable_web_page_preview: true});
+                ;
+              await bot.sendMessage(TELEGRAM_CHAT_ID, message, { disable_web_page_preview: true });
               updateOpportunityBuffer(pair, spread);
             }
           }
@@ -297,7 +318,7 @@ async function executeArbitrageCheck(exA, exB) {
 
 (async function main() {
   console.log("Starting the bot...");
-  
+
   while (true) {
     await executeArbitrageCheck(exchange1, exchange2);
     await new Promise((resolve) => setTimeout(resolve, 1000));
