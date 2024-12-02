@@ -120,25 +120,16 @@ function filterActivePairs(orderBooks) {
 
 async function filterPerDayVolume(exchange, pairs) {
   try {
-      // Step 1: Fetch available markets on the exchange
-      const markets = await exchange.loadMarkets();
-
-      // Step 2: Filter out pairs that are not supported by the exchange
-      const validPairs = pairs.filter(pair => markets[pair]);
-
-      if (validPairs.length === 0) {
-          console.log("No valid pairs found for the exchange.");
-          return [];
-      }
-
       // Fetch tickers for all pairs
-      const tickers = await exchange.fetchTickers(validPairs);
-      // Filter pairs with volume greater than MIN_DAY_VOLUME
-      const filteredPairs = pairs.filter(pair => {
-          const ticker = tickers[pair];
-          return ticker && ticker.baseVolume && ticker.baseVolume > MIN_24_VOLUME;
-      });
-      return filteredPairs;
+      // const tickers = await exchange.fetchTickers(pairs);
+
+      // // Filter pairs with volume greater than MIN_DAY_VOLUME
+      // const filteredPairs = pairs.filter(pair => {
+      //     const ticker = tickers[pair];
+      //     return ticker && ticker.baseVolume && ticker.baseVolume > MIN_24_VOLUME;
+      // });
+
+      return pairs;
   } catch (error) {
       console.error("Error fetching or filtering pairs:", error);
   }
