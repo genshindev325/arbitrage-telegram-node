@@ -1,6 +1,5 @@
 import ccxt from 'ccxt';
 import TelegramBot from 'node-telegram-bot-api';
-import { SocksProxyAgent } from 'socks-proxy-agent';
 import _ from 'lodash';
 import {
   TELEGRAM_API_KEY,
@@ -10,9 +9,7 @@ import {
   BUFFER_EXPIRY_TIME,
   ARBITRAGE_PERCENTAGE_THRESHOLD,
   proxies,
-  MAX_PROCESS_COUNT,
-  MIN_24_VOLUME,
-  EXCHANGE_URLS
+  MAX_PROCESS_COUNT
 } from "./config.js";
 const exchange1 = 'Gate';
 const exchange2 = 'Mexc';
@@ -24,22 +21,16 @@ function chunkify(array, size) {
   return _.chunk(array, size);
 }
 
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 async function fetchOrderBooks(exchange, pairs, exchangeBuyName, exchangeSellName, proxy) {
   const orderBooks = {};
-  exchange.agent = new SocksProxyAgent(proxy);
-
   await Promise.all(
     pairs.map(async (pair) => {
       try {
         let orderBook = {};
-        // console.log(await exchange.fetch('https://api.ipify.org/'));
-        if (exchange.symbols.includes(pair) && exchangeBuyName.includes('FUTURE') && exchangeSellName.includes('SPOT')) {
+        exchange.socksProxy = proxy;
+        if (exchangeBuyName.includes('FUTURE') && exchangeSellName.includes('SPOT')) {
           orderBook = await exchange.fetchOrderBook(pair.replace('/USDT', '/USDT:USDT'));
-        } else if(exchange.symbols.includes(pair)) {
+        } else {
           orderBook = await exchange.fetchOrderBook(pair);
         }
         orderBooks[pair] = orderBook;
@@ -66,6 +57,9 @@ function calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName)
       const spreadAB = ((bidsB[0] - asksA[0]) / asksA[0]) * 100;
       const spreadBA = ((bidsA[0] - asksB[0]) / asksB[0]) * 100;
 
+      console.log(bidsA);
+      console.log(asksB);
+
       const buyVolumeA = asksA[1];
       const sellVolumeB = bidsB[1];
       const buyVolumeB = asksB[1];
@@ -81,8 +75,6 @@ function calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName)
         profits.push({
           pair,
           direction: `${exchangeAName}->${exchangeBName}`,
-          exchangeA: exchangeAName,
-          exchangeB: exchangeBName,
           spread: isNaN(spreadAB) ? 0 : spreadAB,
           buyPrice: asksA[0],
           sellPrice: bidsB[0],
@@ -95,8 +87,6 @@ function calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName)
         profits.push({
           pair,
           direction: `${exchangeBName}->${exchangeAName}`,
-          exchangeA: exchangeBName,
-          exchangeB: exchangeAName,
           spread: isNaN(spreadBA) ? 0 : spreadBA,
           buyPrice: asksB[0] || 0,
           sellPrice: bidsA[0] || 0,
@@ -117,24 +107,6 @@ function filterActivePairs(orderBooks) {
     return filtered;
   }, {});
 }
-
-async function filterPerDayVolume(exchange, pairs) {
-  try {
-      // Fetch tickers for all pairs
-      // const tickers = await exchange.fetchTickers(pairs);
-
-      // // Filter pairs with volume greater than MIN_DAY_VOLUME
-      // const filteredPairs = pairs.filter(pair => {
-      //     const ticker = tickers[pair];
-      //     return ticker && ticker.baseVolume && ticker.baseVolume > MIN_24_VOLUME;
-      // });
-
-      return pairs;
-  } catch (error) {
-      console.error("Error fetching or filtering pairs:", error);
-  }
-}
-
 
 function shouldNotifyOpportunity(pair, newPercentage) {
   const now = Date.now();
@@ -158,10 +130,7 @@ function updateOpportunityBuffer(pair, percentage) {
 async function executeArbitrageCheck(exA, exB) {
   const bot = new TelegramBot(TELEGRAM_API_KEY, { polling: false });
   const exchangePlateA = new ccxt.gateio();
-  const exchangePlateB = new ccxt.mexc({
-    // 'rateLimit' : 100,
-    'enableRateLimit' : false
-  });
+  const exchangePlateB = new ccxt.mexc();
 
   try {
     await Promise.all([exchangePlateA.loadMarkets(), exchangePlateB.loadMarkets()]);
@@ -221,65 +190,58 @@ async function executeArbitrageCheck(exA, exB) {
     for (let i = 0; i < numParts; i++) {
       pairsToProcess.push([
         { pairs: PairsExAFExBFChunks[i], exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-FUTURE`, exchangeBName: `${exB}-FUTURE` },
-        { pairs: PairsExASExAFChunks[i], exchangeA: exchangePlateA, exchangeB: exchangePlateA, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exA}-FUTURE` },
-        { pairs: PairsExASExBFChunks[i], exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exB}-FUTURE` },
-        { pairs: PairsExBSExBFChunks[i], exchangeA: exchangePlateB, exchangeB: exchangePlateB, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exB}-FUTURE` },
-        { pairs: PairsExBSExAFChunks[i], exchangeA: exchangePlateB, exchangeB: exchangePlateA, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exA}-FUTURE` }
+        // { pairs: PairsExASExAFChunks[i], exchangeA: exchangePlateA, exchangeB: exchangePlateA, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exA}-FUTURE` },
+        // { pairs: PairsExASExBFChunks[i], exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exB}-FUTURE` },
+        // { pairs: PairsExBSExBFChunks[i], exchangeA: exchangePlateB, exchangeB: exchangePlateB, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exB}-FUTURE` },
+        // { pairs: PairsExBSExAFChunks[i], exchangeA: exchangePlateB, exchangeB: exchangePlateA, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exA}-FUTURE` }
       ]);
     }
 
-    const pairsToProcessTest = [
-      { pairs: PairsExAFExBF, exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-FUTURE`, exchangeBName: `${exB}-FUTURE`, proxyA: proxies[0], proxyB: proxies[1]},
-      { pairs: PairsExASExAF, exchangeA: exchangePlateA, exchangeB: exchangePlateA, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exA}-FUTURE`, proxyA: proxies[2], proxyB: proxies[3] },
-      { pairs: PairsExASExBF, exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exB}-FUTURE`, proxyA: proxies[4], proxyB: proxies[5] },
-      { pairs: PairsExBSExBF, exchangeA: exchangePlateB, exchangeB: exchangePlateB, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exB}-FUTURE`, proxyA: proxies[6], proxyB: proxies[7] },
-      { pairs: PairsExBSExAF, exchangeA: exchangePlateB, exchangeB: exchangePlateA, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exA}-FUTURE`, proxyA: proxies[8], proxyB: proxies[9] }
-    ]
+    const aaaa = [1, 2, 3, 4, 5]
 
     const fetchStartTime = Date.now();
     await Promise.all(
-      pairsToProcessTest.map(async ({ pairs, exchangeA, exchangeB, exchangeAName, exchangeBName, proxyA, proxyB }) => {
-        const batches = chunkify(pairs, 10);
-        for (const batch of batches) {
-          let orderBooksA = [];
-          let orderBooksB = [];
-
-          const batchA = await filterPerDayVolume(exchangeA, batch);
-          const batchB = await filterPerDayVolume(exchangeB, batch);
-          
-          const fetchStartTime = Date.now();
-          await Promise.all([
-            orderBooksA = filterActivePairs(await fetchOrderBooks(exchangeA, batchA, exchangeAName, exchangeBName, proxyA)),
-            orderBooksB = filterActivePairs(await fetchOrderBooks(exchangeB, batchB, exchangeBName, exchangeAName, proxyB))
-          ])
-          console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
+      aaaa.map(async (_, index) => {
+        for (const { pairs, exchangeA, exchangeB, exchangeAName, exchangeBName } of pairsToProcess[index]) {
+          const batches = chunkify(pairs, 50);
+          for (const batch of batches) {
+            let orderBooksA = [];
+            let orderBooksB = [];
       
-          const profits = calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName);
+            const fetchStartTime = Date.now();
+            await Promise.all([
+              orderBooksA = filterActivePairs(await fetchOrderBooks(exchangeA, batch, exchangeAName, exchangeBName, proxies[(index * 2) % proxies.length])),
+              orderBooksB = filterActivePairs(await fetchOrderBooks(exchangeB, batch, exchangeBName, exchangeAName, proxies[(index * 2 + 1) % proxies.length]))
+            ])
+            console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
+        
+            const profits = calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName);
 
-          for (const { pair, spread, direction, exchangeA, exchangeB, buyPrice, sellPrice, maxVolume, profit } of profits) {
-            if (shouldNotifyOpportunity(pair, spread)) {
-              console.log(`Alert sent for ${pair}: Spread: ${spread}%, Profit: ${profit}`);
-              const message =
-                `Coin: ${pair}\n` +
-                `Direction: ${direction}\n` +
-                `Spread: ${spread.toFixed(2)}%\n` +
-                `Buy Price: ${buyPrice}\n` +
-                `Sell Price: ${sellPrice}\n` +
-                `Max Volume: ${maxVolume.toFixed(2)}\n` +
-                `Potential Profit: ${profit.toFixed(2)} USDT\n` +
-                `Links:\n` +
-                `- ${exchangeA}: ${EXCHANGE_URLS[exchangeA]}` + `${pair.replace('/', '_').replace(':USDT', '')}\n` +
-                `- ${exchangeB}: ${EXCHANGE_URLS[exchangeB]}` + `${pair.replace('/', '_').replace(':USDT', '')}\n` +
-                `------------------------------------------`
-              ;
-              await bot.sendMessage(TELEGRAM_CHAT_ID, message, {disable_web_page_preview: true});
-              updateOpportunityBuffer(pair, spread);
+            for (const { pair, spread, direction, buyPrice, sellPrice, maxVolume, profit } of profits) {
+              if (shouldNotifyOpportunity(pair, spread)) {
+                console.log(`Alert sent for ${pair}: Spread: ${spread}%, Profit: ${profit}`);
+                const message =
+                  `Coin: ${pair}\n` +
+                  `Direction: ${direction}\n` +
+                  `Spread: ${spread.toFixed(2)}%\n` +
+                  `Buy Price: ${buyPrice}\n` +
+                  `Sell Price: ${sellPrice}\n` +
+                  `Max Volume: ${maxVolume.toFixed(2)}\n` +
+                  `Potential Profit: ${profit.toFixed(2)} USDT\n` +
+                  `Links:\n` +
+                  `- ${exA}: https://www.gate.io/futures/USDT/${pair.replace('/', '_').replace(':USDT', '')}\n` + // need to be modified
+                  `- ${exB}: https://futures.mexc.com/exchange/${pair.replace('/', '_').replace(':USDT', '')}\n` + // need to be modified
+                  `------------------------------------------`
+                ;
+                await bot.sendMessage(TELEGRAM_CHAT_ID, message, {disable_web_page_preview: true});
+                updateOpportunityBuffer(pair, spread);
+              }
             }
           }
         }
+        console.log(`total calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
       })
     )
-    console.log(`total calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
   } catch (err) {
     console.error("An error occurred:", err.message);
   }

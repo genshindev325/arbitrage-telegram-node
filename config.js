@@ -1,10 +1,11 @@
 export const TELEGRAM_API_KEY = '7527533762:AAFL5xUrpYlSRGVBUg3rypxmDFJfr7ErU3g';
 export const TELEGRAM_CHAT_ID = '7273835466';
-export const MIN_SPREAD = 0.1;
+export const MIN_SPREAD = 1;
 export const MIN_VOLUME = 100;
 export const BUFFER_EXPIRY_TIME = 5 * 60 * 1000;
-export const ARBITRAGE_PERCENTAGE_THRESHOLD = 0.00005;
+export const ARBITRAGE_PERCENTAGE_THRESHOLD = 0.005;
 export const MAX_PROCESS_COUNT = 30;
+export const MIN_24_VOLUME = 0;
 export const proxies = [
   'socks5://4bT5u42E7jZmTuA:lRz2sX6OdH1CWAs@89.38.46.88:42618',
   'socks5://IDmJsKwm8hvoEw9:6M4InkYDdUxKKqf@194.135.30.221:48947',
@@ -17,3 +18,9 @@ export const proxies = [
   'socks5://uhmu8ks8GQy1Rsi:4UKeNcHVxTxpp1j@45.86.94.145:46328',
   'socks5://mou7U3Gp1mox4DG:5pyDVOcV5YVd4kL@92.114.93.42:47619'
 ];
+export const EXCHANGE_URLS = {
+  'Gate-SPOT': 'https://www.gate.io/trade/',
+  'Gate-FUTURE': 'https://www.gate.io/futures/USDT/',
+  'Mexc-SPOT': 'https://mexc.com/exchange/',
+  'Mexc-FUTURE': 'https://futures.mexc.com/exchange/'
+}
