@@ -12,11 +12,19 @@ import {
   proxies,
   MAX_PROCESS_COUNT,
   MIN_24_VOLUME,
-  EXCHANGE_URLS
+  EXCHANGE_URLS,
+  EXCHANGES
 } from "./config.js";
-const exchange1 = 'Gate';
-const exchange2 = 'Mexc';
+
 const opportunityBuffer = {};
+const exchanges = {
+  'Gate': new ccxt.gateio({ 'enableRateLimit': false, 'agent': new SocksProxyAgent(proxies[0]) }),
+  'Mexc': new ccxt.mexc({ 'enableRateLimit': false, 'agent': new SocksProxyAgent(proxies[0]) }),
+  'Bybit': new ccxt.bybit({ 'enableRateLimit': false, 'agent': new SocksProxyAgent(proxies[0]) }),
+  'Kucoin': new ccxt.kucoin({ 'enableRateLimit': false, 'agent': new SocksProxyAgent(proxies[0]) }),
+  'Bitget': new ccxt.bitget({ 'enableRateLimit': false, 'agent': new SocksProxyAgent(proxies[0]) }),
+  'Okx': new ccxt.okx({ 'enableRateLimit': false, 'agent': new SocksProxyAgent(proxies[0]) })
+}
 process.setMaxListeners(MAX_PROCESS_COUNT);
 
 function chunkify(array, size) {
@@ -191,11 +199,8 @@ function updateOpportunityBuffer(pair, percentage) {
 
 async function executeArbitrageCheck(exA, exB) {
   const bot = new TelegramBot(TELEGRAM_API_KEY, { polling: false });
-  const exchangePlateA = new ccxt.gateio();
-  const exchangePlateB = new ccxt.mexc({
-    // 'rateLimit' : 100,
-    'enableRateLimit': false
-  });
+  const exchangePlateA = exchanges[exA];
+  const exchangePlateB = exchanges[exB];
 
   try {
     await Promise.all([exchangePlateA.loadMarkets(), exchangePlateB.loadMarkets()]);
@@ -322,7 +327,7 @@ async function executeArbitrageCheck(exA, exB) {
   console.log("Starting the bot...");
 
   while (true) {
-    await executeArbitrageCheck(exchange1, exchange2);
+    await executeArbitrageCheck(EXCHANGES[0], EXCHANGES[1]);
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     process.on('SIGINT', () => {

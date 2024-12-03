@@ -22,5 +22,21 @@ export const EXCHANGE_URLS = {
   'Gate-SPOT': 'https://www.gate.io/trade/',
   'Gate-FUTURE': 'https://www.gate.io/futures/USDT/',
   'Mexc-SPOT': 'https://mexc.com/exchange/',
-  'Mexc-FUTURE': 'https://futures.mexc.com/exchange/'
-}
+  'Mexc-FUTURE': 'https://futures.mexc.com/exchange/',
+  'Bybit-SPOT': 'https://www.bybit.com/trade/spot/',
+  'Bybit-FUTURE': 'https://www.bybit.com/trade/usdt/',
+  'Kucoin-SPOT': 'https://www.kucoin.com/trade/',
+  'Kucoin-FUTURE': 'https://futures.kucoin.com/',
+  'Bitget-SPOT': 'https://www.bitget.com/spot/',
+  'Bitget-FUTURE': 'https://www.bitget.com/futures/',
+  'Okx-SPOT': 'https://www.okx.com/trade-spot/',
+  'Okx-FUTURE': 'https://www.okx.com/trade-futures/',
+};
+export const EXCHANGES = [
+  'Gate',
+  'Mexc',
+  'Bybit',
+  'Kucoin',
+  'Bitget',
+  'Okx'
+]
