@@ -335,8 +335,7 @@ async function executeArbitrageCheck(exA, exB) {
           }
         }
 
-        const result = await Promise.all(arbitragePromises);
-        console.log(result);
+        await Promise.all(arbitragePromises);
       } catch (error) {
         console.error("Error during arbitrage checks:", error.message);
       }
