@@ -44,7 +44,7 @@ async function fetchOrderBooks(exchange, pairs, exchangeBuyName, exchangeSellNam
         }
         orderBooks[pair] = orderBook;
       } catch (err) {
-        console.error(`Error fetching order book for ${pair}:`, err.message);
+        return orderBooks;
       }
     })
   );
@@ -209,7 +209,7 @@ async function executeArbitrageCheck(exA, exB) {
     }
     
     // Split each array into 10 parts
-    const numParts = 5;
+    const numParts = 2;
     const PairsExAFExBFChunks = chunkArray(PairsExAFExBF, numParts);
     const PairsExASExAFChunks = chunkArray(PairsExASExAF, numParts);
     const PairsExASExBFChunks = chunkArray(PairsExASExBF, numParts);
@@ -220,63 +220,67 @@ async function executeArbitrageCheck(exA, exB) {
     const pairsToProcess = [];    
     for (let i = 0; i < numParts; i++) {
       pairsToProcess.push([
-        { pairs: PairsExAFExBFChunks[i], exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-FUTURE`, exchangeBName: `${exB}-FUTURE` },
-        { pairs: PairsExASExAFChunks[i], exchangeA: exchangePlateA, exchangeB: exchangePlateA, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exA}-FUTURE` },
-        { pairs: PairsExASExBFChunks[i], exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exB}-FUTURE` },
-        { pairs: PairsExBSExBFChunks[i], exchangeA: exchangePlateB, exchangeB: exchangePlateB, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exB}-FUTURE` },
-        { pairs: PairsExBSExAFChunks[i], exchangeA: exchangePlateB, exchangeB: exchangePlateA, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exA}-FUTURE` }
+        { pairs: PairsExAFExBFChunks[i], exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-FUTURE`, exchangeBName: `${exB}-FUTURE`, proxy: proxies[i * 5] },
+        { pairs: PairsExASExAFChunks[i], exchangeA: exchangePlateA, exchangeB: exchangePlateA, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exA}-FUTURE`, proxy: proxies[i * 5 + 1] },
+        { pairs: PairsExASExBFChunks[i], exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exB}-FUTURE`, proxy: proxies[i * 5 + 2] },
+        { pairs: PairsExBSExBFChunks[i], exchangeA: exchangePlateB, exchangeB: exchangePlateB, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exB}-FUTURE`, proxy: proxies[i * 5 + 3] },
+        { pairs: PairsExBSExAFChunks[i], exchangeA: exchangePlateB, exchangeB: exchangePlateA, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exA}-FUTURE`, proxy: proxies[i * 5 + 4] }
       ]);
     }
 
     const pairsToProcessTest = [
-      { pairs: PairsExAFExBF, exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-FUTURE`, exchangeBName: `${exB}-FUTURE`, proxyA: proxies[0], proxyB: proxies[1]},
-      { pairs: PairsExASExAF, exchangeA: exchangePlateA, exchangeB: exchangePlateA, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exA}-FUTURE`, proxyA: proxies[2], proxyB: proxies[3] },
-      { pairs: PairsExASExBF, exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exB}-FUTURE`, proxyA: proxies[4], proxyB: proxies[5] },
-      { pairs: PairsExBSExBF, exchangeA: exchangePlateB, exchangeB: exchangePlateB, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exB}-FUTURE`, proxyA: proxies[6], proxyB: proxies[7] },
-      { pairs: PairsExBSExAF, exchangeA: exchangePlateB, exchangeB: exchangePlateA, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exA}-FUTURE`, proxyA: proxies[8], proxyB: proxies[9] }
+      { pairs: PairsExAFExBF, exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-FUTURE`, exchangeBName: `${exB}-FUTURE`, proxyA: proxies[0], proxyB: proxies[0]},
+      { pairs: PairsExASExAF, exchangeA: exchangePlateA, exchangeB: exchangePlateA, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exA}-FUTURE`, proxyA: proxies[2], proxyB: proxies[2] },
+      { pairs: PairsExASExBF, exchangeA: exchangePlateA, exchangeB: exchangePlateB, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exB}-FUTURE`, proxyA: proxies[4], proxyB: proxies[4] },
+      { pairs: PairsExBSExBF, exchangeA: exchangePlateB, exchangeB: exchangePlateB, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exB}-FUTURE`, proxyA: proxies[6], proxyB: proxies[6] },
+      { pairs: PairsExBSExAF, exchangeA: exchangePlateB, exchangeB: exchangePlateA, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exA}-FUTURE`, proxyA: proxies[8], proxyB: proxies[8] }
     ]
 
     const fetchStartTime = Date.now();
     await Promise.all(
-      pairsToProcessTest.map(async ({ pairs, exchangeA, exchangeB, exchangeAName, exchangeBName, proxyA, proxyB }) => {
-        const batches = chunkify(pairs, 10);
-        for (const batch of batches) {
-          let orderBooksA = [];
-          let orderBooksB = [];
-
-          const batchA = await filterPerDayVolume(exchangeA, batch);
-          const batchB = await filterPerDayVolume(exchangeB, batch);
+      pairsToProcess.map(async (pairsToProcessBunch) => {
+        await Promise.all(
+          pairsToProcessBunch.map(async ({ pairs, exchangeA, exchangeB, exchangeAName, exchangeBName, proxy }) => {
+            const batches = chunkify(pairs, 10);
+            for (const batch of batches) {
+              let orderBooksA = [];
+              let orderBooksB = [];
+    
+              const batchA = await filterPerDayVolume(exchangeA, batch);
+              const batchB = await filterPerDayVolume(exchangeB, batch);
+              
+              const fetchStartTime = Date.now();
+              await Promise.all([
+                orderBooksA = filterActivePairs(await fetchOrderBooks(exchangeA, batchA, exchangeAName, exchangeBName, proxy)),
+                orderBooksB = filterActivePairs(await fetchOrderBooks(exchangeB, batchB, exchangeBName, exchangeAName, proxy))
+              ])
+              console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
           
-          const fetchStartTime = Date.now();
-          await Promise.all([
-            orderBooksA = filterActivePairs(await fetchOrderBooks(exchangeA, batchA, exchangeAName, exchangeBName, proxyA)),
-            orderBooksB = filterActivePairs(await fetchOrderBooks(exchangeB, batchB, exchangeBName, exchangeAName, proxyB))
-          ])
-          console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
-      
-          const profits = calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName);
-
-          for (const { pair, spread, direction, exchangeA, exchangeB, buyPrice, sellPrice, maxVolume, profit } of profits) {
-            if (shouldNotifyOpportunity(pair, spread)) {
-              console.log(`Alert sent for ${pair}: Spread: ${spread}%, Profit: ${profit}`);
-              const message =
-                `Coin: ${pair}\n` +
-                `Direction: ${direction}\n` +
-                `Spread: ${spread.toFixed(2)}%\n` +
-                `Buy Price: ${buyPrice}\n` +
-                `Sell Price: ${sellPrice}\n` +
-                `Max Volume: ${maxVolume.toFixed(2)}\n` +
-                `Potential Profit: ${profit.toFixed(2)} USDT\n` +
-                `Links:\n` +
-                `- ${exchangeA}: ${EXCHANGE_URLS[exchangeA]}` + `${pair.replace('/', '_').replace(':USDT', '')}\n` +
-                `- ${exchangeB}: ${EXCHANGE_URLS[exchangeB]}` + `${pair.replace('/', '_').replace(':USDT', '')}\n` +
-                `------------------------------------------`
-              ;
-              await bot.sendMessage(TELEGRAM_CHAT_ID, message, {disable_web_page_preview: true});
-              updateOpportunityBuffer(pair, spread);
+              const profits = calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName);
+    
+              for (const { pair, spread, direction, exchangeA, exchangeB, buyPrice, sellPrice, maxVolume, profit } of profits) {
+                if (shouldNotifyOpportunity(pair, spread)) {
+                  console.log(`Alert sent for ${pair}: Spread: ${spread}%, Profit: ${profit}`);
+                  const message =
+                    `Coin: ${pair}\n` +
+                    `Direction: ${direction}\n` +
+                    `Spread: ${spread.toFixed(2)}%\n` +
+                    `Buy Price: ${buyPrice}\n` +
+                    `Sell Price: ${sellPrice}\n` +
+                    `Max Volume: ${maxVolume.toFixed(2)}\n` +
+                    `Potential Profit: ${profit.toFixed(2)} USDT\n` +
+                    `Links:\n` +
+                    `- ${exchangeA}: ${EXCHANGE_URLS[exchangeA]}` + `${pair.replace('/', '_').replace(':USDT', '')}\n` +
+                    `- ${exchangeB}: ${EXCHANGE_URLS[exchangeB]}` + `${pair.replace('/', '_').replace(':USDT', '')}\n` +
+                    `------------------------------------------`
+                  ;
+                  await bot.sendMessage(TELEGRAM_CHAT_ID, message, {disable_web_page_preview: true});
+                  updateOpportunityBuffer(pair, spread);
+                }
+              }
             }
-          }
-        }
+          })
+        )
       })
     )
     console.log(`total calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
