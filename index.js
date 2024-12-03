@@ -41,7 +41,6 @@ async function fetchWithRetry(fn, retries = 3, delay = 1000) {
       if (attempts >= retries) {
         throw err; // If all retries fail, propagate the error
       }
-      console.log(`Retrying... (${attempts}/${retries})`);
       await new Promise(resolve => setTimeout(resolve, delay)); // Wait before retrying
     }
   }
@@ -267,7 +266,6 @@ async function executeArbitrageCheck(exA, exB) {
       ]);
     }
 
-    const fetchStartTime = Date.now();
     await Promise.all(
       proxies.map(async (proxy, index) => {
         for (const pairsToProcessBunch of pairsToProcess[index]) {
@@ -277,7 +275,7 @@ async function executeArbitrageCheck(exA, exB) {
               for (const batch of batches) {
                 let orderBooksA = [];
                 let orderBooksB = [];
-      
+
                 const batchA = await filterPerDayVolume(exchangeA, batch);
                 const batchB = await filterPerDayVolume(exchangeB, batch);
                 if (batchA.length === 0 || batchB.length === 0) continue;
@@ -288,9 +286,9 @@ async function executeArbitrageCheck(exA, exB) {
                   orderBooksB = filterActivePairs(await fetchOrderBooks(exchangeB, batchB, exchangeBName, exchangeAName, proxy))
                 ])
                 console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
-      
+
                 const profits = calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName);
-      
+
                 for (const { pair, spread, direction, exchangeA, exchangeB, buyPrice, sellPrice, maxVolume, profit } of profits) {
                   if (shouldNotifyOpportunity(pair, spread)) {
                     console.log(`Alert sent for ${pair}: Spread: ${spread}%, Profit: ${profit}`);
@@ -317,7 +315,6 @@ async function executeArbitrageCheck(exA, exB) {
         }
       })
     )
-    console.log(`total calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
   } catch (err) {
     console.error("An error occurred:", err.message);
   }
@@ -327,7 +324,27 @@ async function executeArbitrageCheck(exA, exB) {
   console.log("Starting the bot...");
 
   while (true) {
-    await executeArbitrageCheck(EXCHANGES[0], EXCHANGES[1]);
+    async function runArbitrageChecksForRange(exchanges, startIndex, endIndex) {
+      try {
+        const arbitragePromises = [];
+
+        // Create all combinations of exchanges between startIndex and endIndex
+        for (let i = startIndex; i <= endIndex; i++) {
+          for (let j = i + 1; j <= endIndex; j++) {
+            arbitragePromises.push(executeArbitrageCheck(exchanges[i], exchanges[j]));
+          }
+        }
+
+        const result = await Promise.all(arbitragePromises);
+        console.log(result);
+      } catch (error) {
+        console.error("Error during arbitrage checks:", error.message);
+      }
+    }
+
+    const scriptStartTime = Date.now();
+    await runArbitrageChecksForRange(EXCHANGES, 0, 4);
+    console.log(`Total script calculated in ${(Date.now() - scriptStartTime) / 1000}s`);
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     process.on('SIGINT', () => {
