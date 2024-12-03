@@ -51,7 +51,7 @@ async function fetchOrderBooks(exchange, pairs, exchangeBuyName, exchangeSellNam
   exchange.agent = new SocksProxyAgent(proxy);
 
   await Promise.all(
-    pairs.map(async (pair) => {
+    pairs.map(async (pair, i) => {
       try {
         let orderBook = {};
         const fetchOrderBook = async () => {
@@ -64,6 +64,7 @@ async function fetchOrderBooks(exchange, pairs, exchangeBuyName, exchangeSellNam
           } else if (exchange.symbols.includes(pair)) {
             return await exchange.fetchOrderBook(pair);
           }
+
           throw new Error(`Symbol ${pair} not supported`);
         };
 
@@ -271,7 +272,7 @@ async function executeArbitrageCheck(exA, exB) {
         for (const pairsToProcessBunch of pairsToProcess[index]) {
           await Promise.all(
             pairsToProcessBunch.map(async ({ pairs, exchangeA, exchangeB, exchangeAName, exchangeBName }) => {
-              const batches = chunkify(pairs, 10);
+              const batches = chunkify(pairs, 5);
               for (const batch of batches) {
                 let orderBooksA = [];
                 let orderBooksB = [];
@@ -285,13 +286,13 @@ async function executeArbitrageCheck(exA, exB) {
                   orderBooksA = filterActivePairs(await fetchOrderBooks(exchangeA, batchA, exchangeAName, exchangeBName, proxy)),
                   orderBooksB = filterActivePairs(await fetchOrderBooks(exchangeB, batchB, exchangeBName, exchangeAName, proxy))
                 ])
-                console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
+                // console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
 
                 const profits = calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName);
 
                 for (const { pair, spread, direction, exchangeA, exchangeB, buyPrice, sellPrice, maxVolume, profit } of profits) {
                   if (shouldNotifyOpportunity(pair, spread)) {
-                    console.log(`Alert sent for ${pair}: Spread: ${spread}%, Profit: ${profit}`);
+                    // console.log(`Alert sent for ${pair}: Spread: ${spread}%, Profit: ${profit}`);
                     const message =
                       `Coin: ${pair}\n` +
                       `Direction: ${direction}\n` +
@@ -301,8 +302,8 @@ async function executeArbitrageCheck(exA, exB) {
                       `Max Volume: ${maxVolume.toFixed(2)}\n` +
                       `Potential Profit: ${profit.toFixed(2)} USDT\n` +
                       `Links:\n` +
-                      `- ${exchangeA}: ${EXCHANGE_URLS[exchangeA]}` + `${pair.replace('/', '_').replace(':USDT', '')}\n` +
-                      `- ${exchangeB}: ${EXCHANGE_URLS[exchangeB]}` + `${pair.replace('/', '_').replace(':USDT', '')}\n` +
+                      `- ${exchangeA}: ${EXCHANGE_URLS[exchangeA].replace('AAA', pair.split('/')[0].toUpperCase()).replace(':USDT', '')}\n` +
+                      `- ${exchangeB}: ${EXCHANGE_URLS[exchangeB].replace('AAA', pair.split('/')[0].toUpperCase()).replace(':USDT', '')}\n` +
                       `------------------------------------------`
                       ;
                     await bot.sendMessage(TELEGRAM_CHAT_ID, message, { disable_web_page_preview: true });

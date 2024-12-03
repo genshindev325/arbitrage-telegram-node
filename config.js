@@ -19,16 +19,16 @@ export const proxies = [
   'socks5://mou7U3Gp1mox4DG:5pyDVOcV5YVd4kL@92.114.93.42:47619'
 ];
 export const EXCHANGE_URLS = {
-  'Gate-SPOT': 'https://www.gate.io/trade/',
-  'Gate-FUTURE': 'https://www.gate.io/futures/USDT/',
-  'Mexc-SPOT': 'https://mexc.com/exchange/',
-  'Mexc-FUTURE': 'https://futures.mexc.com/exchange/',
-  'Bybit-SPOT': 'https://www.bybit.com/en/trade/spot/',
-  'Bybit-FUTURE': 'https://www.bybit.com/trade/usdt/',
-  'Bitget-SPOT': 'https://www.bitget.com/spot/',
-  'Bitget-FUTURE': 'https://www.bitget.com/futures/',
-  'Okx-SPOT': 'https://www.okx.com/trade-spot/',
-  'Okx-FUTURE': 'https://www.okx.com/trade-futures/',
+  'Gate-SPOT': 'https://www.gate.io/trade/AAA_USDT', // BTC_USDT
+  'Gate-FUTURE': 'https://www.gate.io/futures/USDT/AAA_USDT', // BTC_USDT
+  'Mexc-SPOT': 'https://mexc.com/exchange/AAA_USDT', // BTC_USDT
+  'Mexc-FUTURE': 'https://futures.mexc.com/exchange/AAA_USDT', // BTC_USDT
+  'Bybit-SPOT': 'https://www.bybit.com/en/trade/spot/AAA/USDT', // BTC/USDT
+  'Bybit-FUTURE': 'https://www.bybit.com/trade/usdt/AAAUSDT', // GMTUSDT
+  'Bitget-SPOT': 'https://www.bitget.com/spot/AAAUSDT', // BTCUSDT
+  'Bitget-FUTURE': 'https://www.bitget.com/futures/usdt/AAAUSDT', // BTCUSDT
+  'Okx-SPOT': 'https://www.okx.com/trade-spot/AAA-USDT', // eth-usdt
+  'Okx-FUTURE': 'https://www.okx.com/trade-swap/AAA-USDT-swap', // xrp-usdt-swap
 };
 export const EXCHANGES = [
   'Gate',
