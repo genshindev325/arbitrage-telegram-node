@@ -5,7 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index-test11.js"
   },
   "dependencies": {
     "ccxt": "^4.4.34",

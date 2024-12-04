@@ -25,7 +25,7 @@ const exchanges = Object.fromEntries(
   EXCHANGES.map((exchangeName, index) => [
     exchangeName,
     new ccxt[exchangeName.toLowerCase()]({
-      rateLimit: 200,
+      rateLimit: 100,
       agent: new SocksProxyAgent(proxies[index % proxies.length]),
     }),
   ])
@@ -40,6 +40,14 @@ let exchangeFlag = {
 }
 
 process.setMaxListeners(MAX_PROCESS_COUNT);
+
+// Helper to split arrays into chunks
+function chunkArray(array, numParts) {
+  const chunkSize = Math.ceil(array.length / numParts);
+  return Array.from({ length: numParts }, (_, index) =>
+    array.slice(index * chunkSize, (index + 1) * chunkSize)
+  );
+}
 
 function chunkify(array, size) {
   return _.chunk(array, size);
@@ -63,7 +71,7 @@ async function fetchWithRetry(fn, retries = 3, delay = 1000) {
 
 // Fetch order books with caching
 async function fetchOrderBooksWithCache(exchange, pair, exchangeBuyName, exchangeSellName) {
-  const cacheKey = `${exchange.id}:${pair}`;
+  const cacheKey = `${exchangeBuyName}:${pair}`;
   if (orderBookCache[cacheKey]) {
     return orderBookCache[cacheKey];
   }
@@ -91,6 +99,7 @@ async function fetchOrderBooksWithCache(exchange, pair, exchangeBuyName, exchang
   }
 }
 
+// Fetch order books with cached memory data
 async function fetchOrderBooks(exchange, pairs, exchangeBuyName, exchangeSellName, proxy) {
   const orderBooks = {};
   exchange.socksProxy = proxy;
@@ -125,6 +134,7 @@ function updateOpportunityBuffer(pair, percentage) {
   };
 }
 
+// Compare with Minimum 24h volume
 async function filterPerDayVolume(exchange, pairs) {
   try {
     const markets = await exchange.loadMarkets();
@@ -135,8 +145,9 @@ async function filterPerDayVolume(exchange, pairs) {
     let tickers;
     try {
       tickers = await exchange.fetchTickers(validPairs);
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     } catch (err) {
+      console.error(`Error fetching tickers for ${exchange.id}:`, err.message);
       return [];
     }
 
@@ -145,6 +156,7 @@ async function filterPerDayVolume(exchange, pairs) {
       return ticker && ticker.baseVolume && ticker.baseVolume > MIN_24_VOLUME;
     });
   } catch (err) {
+    console.error(`Error in filterPerDayVolume for ${exchange.id}:`, err.message);
     return [];
   }
 }
@@ -252,16 +264,8 @@ async function executeArbitrageCheck(exA, exB) {
     console.log(`Number of common trading pairs (${exB}-spot / ${exA}-futures): ${PairsExBSExAF.length}`);
     console.log(`Number of common trading pairs (${exA}-futures / ${exB}-futures): ${PairsExAFExBF.length}`);
 
-    // Helper to split arrays into chunks
-    function chunkArray(array, numParts) {
-      const chunkSize = Math.ceil(array.length / numParts);
-      return Array.from({ length: numParts }, (_, index) =>
-        array.slice(index * chunkSize, (index + 1) * chunkSize)
-      );
-    }
-
     // Split each array into 10 parts
-    const numParts = 2;
+    const numParts = 10;
     const PairsExAFExBFChunks = chunkArray(PairsExAFExBF, numParts);
     const PairsExASExAFChunks = chunkArray(PairsExASExAF, numParts);
     const PairsExASExBFChunks = chunkArray(PairsExASExBF, numParts);
@@ -272,19 +276,19 @@ async function executeArbitrageCheck(exA, exB) {
     const pairsToProcess = [];
     for (let i = 0; i < numParts; i++) {
       pairsToProcess.push([
-        { pairs: PairsExAFExBFChunks[i], exchangeA: exchangeA, exchangeB: exchangeB, exchangeAName: `${exA}-FUTURE`, exchangeBName: `${exB}-FUTURE`, proxy: proxies[i * 5] },
-        { pairs: PairsExASExAFChunks[i], exchangeA: exchangeA, exchangeB: exchangeA, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exA}-FUTURE`, proxy: proxies[i * 5 + 1] },
-        { pairs: PairsExBSExBFChunks[i], exchangeA: exchangeB, exchangeB: exchangeB, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exB}-FUTURE`, proxy: proxies[i * 5 + 2] },
-        { pairs: PairsExASExBFChunks[i], exchangeA: exchangeA, exchangeB: exchangeB, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exB}-FUTURE`, proxy: proxies[i * 5 + 3] },
-        { pairs: PairsExBSExAFChunks[i], exchangeA: exchangeB, exchangeB: exchangeA, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exA}-FUTURE`, proxy: proxies[i * 5 + 4] }
+        { pairs: PairsExAFExBFChunks[i], exchangeA: exchangeA, exchangeB: exchangeB, exchangeAName: `${exA}-FUTURE`, exchangeBName: `${exB}-FUTURE` },
+        { pairs: PairsExASExAFChunks[i], exchangeA: exchangeA, exchangeB: exchangeA, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exA}-FUTURE` },
+        { pairs: PairsExBSExBFChunks[i], exchangeA: exchangeB, exchangeB: exchangeB, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exB}-FUTURE` },
+        { pairs: PairsExASExBFChunks[i], exchangeA: exchangeA, exchangeB: exchangeB, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exB}-FUTURE` },
+        { pairs: PairsExBSExAFChunks[i], exchangeA: exchangeB, exchangeB: exchangeA, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exA}-FUTURE` }
       ]);
     }
 
     // Process all pairs
     await Promise.all(
-      pairsToProcess.map(async (pairsToProcessBunch) => {
+      proxies.map(async (proxy, proxyIndex) => {
         await Promise.all(
-          pairsToProcessBunch.map(async ({ pairs, exchangeA, exchangeB, exchangeAName, exchangeBName, proxy }) => {
+          pairsToProcess[proxyIndex].map(async ({ pairs, exchangeA, exchangeB, exchangeAName, exchangeBName }) => {
             if (exchangeAName.split('-')[0] === exchangeBName.split('-')[0]) {
               if (exchangeFlag[exchangeAName.split('-')[0]]) {
                 return;
@@ -299,10 +303,10 @@ async function executeArbitrageCheck(exA, exB) {
 
               if (batchA.length === 0 || batchB.length === 0) continue;
 
-              // const fetchStartTime = Date.now();
+              const fetchStartTime = Date.now();
               const orderBooksA = await fetchOrderBooks(exchangeA, batchA, exchangeAName, exchangeBName, proxy);
               const orderBooksB = await fetchOrderBooks(exchangeB, batchB, exchangeBName, exchangeAName, proxy);
-              // console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
+              console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
               
               const profits = calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName);
 
