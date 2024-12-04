@@ -296,7 +296,7 @@ async function executeArbitrageCheck(exA, exB) {
                 exchangeFlag[exchangeAName.split('-')[0]] = true;
               }
             }
-            const batches = chunkify(pairs, 10);
+            const batches = chunkify(pairs, 15);
             for (const batch of batches) {
               const batchA = await filterPerDayVolume(exchangeA, batch);
               const batchB = await filterPerDayVolume(exchangeB, batch);
