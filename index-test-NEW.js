@@ -15,16 +15,18 @@ import {
   EXCHANGE_URLS, 
   EXCHANGES
 } from "./config.js";
+
 const exchanges = Object.fromEntries(
   EXCHANGES.map((exchangeName, index) => [
     exchangeName,
     new ccxt[exchangeName.toLowerCase()]({
-      rateLimit: 2000,
+      rateLimit: 200,
       agent: new SocksProxyAgent(proxies[index % proxies.length]),
     }),
   ])
 );
 const opportunityBuffer = {};
+const orderBookCache = {};
 
 process.setMaxListeners(MAX_PROCESS_COUNT);
 
@@ -32,8 +34,41 @@ function chunkify(array, size) {
   return _.chunk(array, size);
 }
 
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+async function fetchWithRetry(fn, retries = 3, delay = 1000) {
+  let attempts = 0;
+  while (attempts < retries) {
+    try {
+      return await fn();
+    } catch (err) {
+      attempts++;
+      if (attempts >= retries) {
+        console.error('Failed after retries:', err.message);
+        throw err; // Propagate error if retries exhausted
+      }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
+// Fetch order books with caching
+async function fetchOrderBooksWithCache(exchange, pair, exchangeBuyName, exchangeSellName) {
+  const cacheKey = `${exchange.id}:${pair}`;
+  if (orderBookCache[cacheKey]) {
+    return orderBookCache[cacheKey];
+  }
+  const orderBook = await fetchWithRetry(() => {
+    if (
+      exchange.symbols.includes(pair) &&
+      exchangeBuyName.includes('FUTURE') &&
+      exchangeSellName.includes('SPOT')
+    ) {
+      exchange.fetchOrderBook(pair.replace('/USDT', '/USDT:USDT'))
+    } else if (exchange.symbols.includes(pair)) {
+      exchange.fetchOrderBook(pair);
+    }
+  }, 3, 1000);
+  orderBookCache[cacheKey] = orderBook; // Save to cache
+  return orderBook;
 }
 
 async function fetchOrderBooks(exchange, pairs, exchangeBuyName, exchangeSellName, proxy) {
@@ -43,15 +78,9 @@ async function fetchOrderBooks(exchange, pairs, exchangeBuyName, exchangeSellNam
   await Promise.all(
     pairs.map(async (pair) => {
       try {
-        let orderBook = {};
-        if (exchange.symbols.includes(pair) && exchangeBuyName.includes('FUTURE') && exchangeSellName.includes('SPOT')) {
-          orderBook = await exchange.fetchOrderBook(pair.replace('/USDT', '/USDT:USDT'));
-        } else if(exchange.symbols.includes(pair)) {
-          orderBook = await exchange.fetchOrderBook(pair);
-        }
-        orderBooks[pair] = orderBook;
+        orderBooks[pair] = await fetchOrderBooksWithCache(exchange, pair, exchangeBuyName, exchangeSellName);
       } catch (err) {
-        return orderBooks;
+        console.error(`Error fetching order book for ${pair}:`, err.message);
       }
     })
   );
@@ -127,21 +156,28 @@ function filterActivePairs(orderBooks) {
 
 async function filterPerDayVolume(exchange, pairs) {
   try {
-      // Fetch tickers for all pairs
-      // const tickers = await exchange.fetchTickers(pairs);
+    const markets = await exchange.loadMarkets();
+    const validPairs = pairs.filter((pair) => markets[pair]);
 
-      // // Filter pairs with volume greater than MIN_DAY_VOLUME
-      // const filteredPairs = pairs.filter(pair => {
-      //     const ticker = tickers[pair];
-      //     return ticker && ticker.baseVolume && ticker.baseVolume > MIN_24_VOLUME;
-      // });
+    if (validPairs.length === 0) return [];
 
-      return pairs;
-  } catch (error) {
-      console.error("Error fetching or filtering pairs:", error);
+    let tickers;
+    try {
+      tickers = await exchange.fetchTickers(validPairs);
+    } catch (err) {
+      console.error(`Error fetching tickers for ${exchange.id}:`, err.message);
+      return [];
+    }
+
+    return validPairs.filter((pair) => {
+      const ticker = tickers[pair];
+      return ticker && ticker.baseVolume && ticker.baseVolume > MIN_24_VOLUME;
+    });
+  } catch (err) {
+    console.error(`Error in filterPerDayVolume for ${exchange.id}:`, err.message);
+    return [];
   }
 }
-
 
 function shouldNotifyOpportunity(pair, newPercentage) {
   const now = Date.now();
@@ -237,18 +273,18 @@ async function executeArbitrageCheck(exA, exB) {
       pairsToProcess.map(async (pairsToProcessBunch) => {
         await Promise.all(
           pairsToProcessBunch.map(async ({ pairs, exchangeA, exchangeB, exchangeAName, exchangeBName, proxy }) => {
-            const batches = chunkify(pairs, 10);
+            const batches = chunkify(pairs, 2);
             for (const batch of batches) {
               let orderBooksA = [];
               let orderBooksB = [];
     
-              const batchA = await filterPerDayVolume(exchangeA, batch);
-              const batchB = await filterPerDayVolume(exchangeB, batch);
+              // const batchA = await filterPerDayVolume(exchangeA, batch);
+              // const batchB = await filterPerDayVolume(exchangeB, batch);
               
               const fetchStartTime = Date.now();
               await Promise.all([
-                orderBooksA = filterActivePairs(await fetchOrderBooks(exchangeA, batchA, exchangeAName, exchangeBName, proxy)),
-                orderBooksB = filterActivePairs(await fetchOrderBooks(exchangeB, batchB, exchangeBName, exchangeAName, proxy))
+                orderBooksA = filterActivePairs(await fetchOrderBooks(exchangeA, batch, exchangeAName, exchangeBName, proxy)),
+                orderBooksB = filterActivePairs(await fetchOrderBooks(exchangeB, batch, exchangeBName, exchangeAName, proxy))
               ])
               console.log(`Order books fetched and spreads calculated in ${(Date.now() - fetchStartTime) / 1000}s`);
           

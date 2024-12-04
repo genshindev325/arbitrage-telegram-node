@@ -4,7 +4,7 @@ export const MIN_SPREAD = 1;
 export const MIN_VOLUME = 100;
 export const BUFFER_EXPIRY_TIME = 5 * 60 * 1000;
 export const ARBITRAGE_PERCENTAGE_THRESHOLD = 0.005;
-export const MAX_PROCESS_COUNT = 30;
+export const MAX_PROCESS_COUNT = 100;
 export const MIN_24_VOLUME = 0;
 export const proxies = [
   'socks5://4bT5u42E7jZmTuA:lRz2sX6OdH1CWAs@89.38.46.88:42618',
