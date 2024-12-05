@@ -347,7 +347,6 @@ async function executeArbitrageCheck(exA, exB) {
       }
       const scriptStartTime = Date.now();
       await Promise.all(arbitragePromises);
-      // await executeArbitrageCheck(EXCHANGES[0], EXCHANGES[1])
       console.log(`Cycle completed in ${(Date.now() - scriptStartTime) / 1000}s`);
       orderBookCache = {};
     } catch (err) {

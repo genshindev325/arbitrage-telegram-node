@@ -2,6 +2,7 @@ import ccxt from 'ccxt';
 import TelegramBot from 'node-telegram-bot-api';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import _ from 'lodash';
+import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import {
   TELEGRAM_API_KEY,
   TELEGRAM_CHAT_ID,
@@ -31,7 +32,6 @@ const exchanges = Object.fromEntries(
   ])
 );
 
-// flags reflect about whether get or not the pairs of ExchangeA-SPOT:ExchangeA-FUTURE
 let exchangeFlag = {
   'Gate': false,
   'Mexc': false,
@@ -54,7 +54,7 @@ function chunkify(array, size) {
   return _.chunk(array, size);
 }
 
-async function fetchWithRetry(fn, retries = 3, delay = 500) {
+async function fetchWithRetry(fn, retries = 2, delay = 100) {
   let attempts = 0;
   while (attempts < retries) {
     try {
@@ -75,29 +75,28 @@ async function fetchOrderBooksWithCache(exchange, pair, exchangeBuyName, exchang
   const cacheKey = `${exchangeBuyName}:${pair}`;
   if (orderBookCache[cacheKey]) {
     return orderBookCache[cacheKey];
-  } else {
-    try {
-      let orderBook = {};
-      const fetchOrderBook = async () => {
-        if (
-          exchange.symbols.includes(pair) &&
-          exchangeBuyName.includes('FUTURE') &&
-          exchangeSellName.includes('SPOT')
-        ) {
-          return await exchange.fetchOrderBook(pair.replace('/USDT', '/USDT:USDT'));
-        } else if (exchange.symbols.includes(pair)) {
-          return await exchange.fetchOrderBook(pair);
-        }
-  
-        throw new Error(`Symbol ${pair} not supported`);
-      };
-  
-      orderBook = await fetchWithRetry(fetchOrderBook, 3, 500);
-      orderBookCache[cacheKey] = orderBook; // Save to cache
-      return orderBook;
-    } catch (error) {
-      console.log('Fetch order books with cache error' + error.message);
-    }
+  }
+  try {
+    let orderBook = {};
+    const fetchOrderBook = async () => {
+      if (
+        exchange.symbols.includes(pair) &&
+        exchangeBuyName.includes('FUTURE') &&
+        exchangeSellName.includes('SPOT')
+      ) {
+        return await exchange.fetchOrderBook(pair.replace('/USDT', '/USDT:USDT'));
+      } else if (exchange.symbols.includes(pair)) {
+        return await exchange.fetchOrderBook(pair);
+      }
+
+      throw new Error(`Symbol ${pair} not supported`);
+    };
+
+    orderBook = await fetchWithRetry(fetchOrderBook, 3, 100);
+    orderBookCache[cacheKey] = orderBook; // Save to cache
+    return orderBook;
+  } catch (error) {
+    console.log('Fetch order books with cache error' + error.message);
   }
 }
 
@@ -147,9 +146,8 @@ async function filterPerDayVolume(exchange, pairs) {
     let tickers;
     try {
       tickers = await exchange.fetchTickers(validPairs);
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     } catch (err) {
-      console.error(`Error fetching tickers for ${exchange.id}:`, err.message);
       return [];
     }
 
@@ -163,7 +161,6 @@ async function filterPerDayVolume(exchange, pairs) {
   }
 }
 
-// Calculate profits
 function calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName) {
   const profits = [];
   for (const pair in orderBooksA) {
@@ -214,136 +211,6 @@ function calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName)
     }
   }
   return profits;
-}
-
-// Calculation between Kucoin and other exchagnes
-async function executeArbitrageKucoinCheck(exA) {
-  const bot = new TelegramBot(TELEGRAM_API_KEY, { polling: false });
-  const exchangeA = exchanges[exA];
-  const exchangeKucoinSpot = new ccxt.kucoin({
-    rateLimit: 100,
-    agent: new SocksProxyAgent(proxies[8]),
-  });
-  const exchangeKucoinFuture = new ccxt.kucoinfutures({
-    rateLimit: 100,
-    agent: new SocksProxyAgent(proxies[9]),
-  })
-
-  try {
-    // Load markets for both exchanges
-    await Promise.all([exchangeA.loadMarkets(), exchangeKucoinSpot.loadMarkets(), exchangeKucoinFuture.loadMarkets()]);
-    console.log("Loading markets...");
-
-    // Fetch symbols
-    const exASpotSymbols = Object.keys(exchangeA.markets).filter(
-      (symbol) => symbol.endsWith('/USDT') && !symbol.includes(':')
-    );
-    const exAFutureSymbols = Object.keys(exchangeA.markets).filter(
-      (symbol) => symbol.includes('/USDT:')
-    );
-    const exKucoinSpotSymbols = Object.keys(exchangeKucoinSpot.markets).filter(
-      (symbol) => symbol.endsWith('/USDT') && !symbol.includes(':')
-    );
-    const exKucoinFutureSymbols = Object.keys(exchangeKucoinFuture.markets).filter(
-      (symbol) => symbol.includes('/USDT:')
-    );
-
-    // Identify common trading pairs
-    const PairsExASExAF = exASpotSymbols.filter((spotSymbol) => {
-      const futureSymbol = spotSymbol.replace('/USDT', '/USDT:USDT');
-      return exAFutureSymbols.includes(futureSymbol);
-    });
-    const PairsExASExBF = exASpotSymbols.filter((spotSymbol) => {
-      const futureSymbol = spotSymbol.replace('/USDT', '/USDT:USDT');
-      return exKucoinFutureSymbols.includes(futureSymbol);
-    });
-    const PairsExBSExBF = exKucoinSpotSymbols.filter((spotSymbol) => {
-      const futureSymbol = spotSymbol.replace('/USDT', '/USDT:USDT');
-      return exKucoinFutureSymbols.includes(futureSymbol);
-    });
-    const PairsExBSExAF = exKucoinSpotSymbols.filter((spotSymbol) => {
-      const futureSymbol = spotSymbol.replace('/USDT', '/USDT:USDT');
-      return exAFutureSymbols.includes(futureSymbol);
-    });
-    const PairsExAFExBF = _.intersection(exAFutureSymbols, exKucoinFutureSymbols);
-
-    // Display common trading pairs
-    console.log(`Number of common trading pairs (${exA}-spot / ${exA}-futures): ${PairsExASExAF.length}`);
-    console.log(`Number of common trading pairs (${exA}-spot / Kucoin-futures): ${PairsExASExBF.length}`);
-    console.log(`Number of common trading pairs (Kucoin-spot / Kucoin-futures): ${PairsExBSExBF.length}`);
-    console.log(`Number of common trading pairs (Kucoin-spot / ${exA}-futures): ${PairsExBSExAF.length}`);
-    console.log(`Number of common trading pairs (${exA}-futures / Kucoin-futures): ${PairsExAFExBF.length}`);
-
-    // Split each array into 10 parts
-    const numParts = 10;
-    const PairsExAFExBFChunks = chunkArray(PairsExAFExBF, numParts);
-    const PairsExASExAFChunks = chunkArray(PairsExASExAF, numParts);
-    const PairsExASExBFChunks = chunkArray(PairsExASExBF, numParts);
-    const PairsExBSExBFChunks = chunkArray(PairsExBSExBF, numParts);
-    const PairsExBSExAFChunks = chunkArray(PairsExBSExAF, numParts);
-
-    // Create pairsToProcess with chunks
-    const pairsToProcess = [];
-    for (let i = 0; i < numParts; i++) {
-      pairsToProcess.push([
-        { pairs: PairsExAFExBFChunks[i], exchangeA: exchangeA, exchangeB: exchangeKucoinFuture, exchangeAName: `${exA}-FUTURE`, exchangeBName: `Kucoin-FUTURE` },
-        { pairs: PairsExASExAFChunks[i], exchangeA: exchangeA, exchangeB: exchangeA, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exA}-FUTURE` },
-        { pairs: PairsExBSExBFChunks[i], exchangeA: exchangeKucoinSpot, exchangeB: exchangeKucoinFuture, exchangeAName: `Kucoin-SPOT`, exchangeBName: `Kucoin-FUTURE` },
-        { pairs: PairsExASExBFChunks[i], exchangeA: exchangeA, exchangeB: exchangeKucoinFuture, exchangeAName: `${exA}-SPOT`, exchangeBName: `Kucoin-FUTURE` },
-        { pairs: PairsExBSExAFChunks[i], exchangeA: exchangeKucoinSpot, exchangeB: exchangeA, exchangeAName: `Kucoin-SPOT`, exchangeBName: `${exA}-FUTURE` }
-      ]);
-    }
-
-    // Process all pairs
-    await Promise.all(
-      proxies.map(async (proxy, proxyIndex) => {
-        await Promise.all(
-          pairsToProcess[proxyIndex].map(async ({ pairs, exchangeA, exchangeB, exchangeAName, exchangeBName }) => {
-            exchangeFlag[exchangeAName.split('-')[0]] = true;
-            const batches = chunkify(pairs, 40);
-            for (const batch of batches) {
-              let batchA, batchB;
-              await Promise.all([
-                batchA = await filterPerDayVolume(exchangeA, batch),
-                batchB = await filterPerDayVolume(exchangeB, batch)
-              ]);
-
-              if (batchA.length === 0 || batchB.length === 0) continue;
-
-              let orderBooksA, orderBooksB;
-              await Promise.all([
-                orderBooksA = await fetchOrderBooks(exchangeA, batchA, exchangeAName, exchangeBName, proxy),
-                orderBooksB = await fetchOrderBooks(exchangeB, batchB, exchangeBName, exchangeAName, proxy)
-              ])
-              const profits = calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName);              
-
-              for (const profit of profits) {
-                if (shouldNotifyOpportunity(profit.pair, profit.spread)) {
-                  const message = 
-                    `Coin: ${profit.pair}\n` +
-                    `Direction: ${profit.direction}\n` +
-                    `Spread: ${profit.spread.toFixed(2)}%\n` +
-                    `Buy Price: ${profit.buyPrice}\n` +
-                    `Sell Price: ${profit.sellPrice}\n` +
-                    `Max Volume: ${profit.maxVolume.toFixed(2)}\n` +
-                    `Potential Profit: ${profit.profit.toFixed(2)} USDT\n` +
-                    `Links:\n` +
-                    `- ${exchangeAName}: ${EXCHANGE_URLS[exchangeAName].replace('AAA', profit.pair.split('/')[0].toUpperCase()).replace(':USDT', '')}\n` +
-                    `- ${exchangeBName}: ${EXCHANGE_URLS[exchangeBName].replace('AAA', profit.pair.split('/')[0].toUpperCase()).replace(':USDT', '')}\n` +
-                    `------------------------------------------`
-                  ;
-                  await bot.sendMessage(TELEGRAM_CHAT_ID, message, { disable_web_page_preview: true });
-                  updateOpportunityBuffer(profit.pair, profit.spread);
-                }
-              }
-            }
-          })
-        );
-      })
-    );
-  } catch (err) {
-    console.error(`An error occurred in arbitrage check for ${exA} and ${exB}:`, err.message);
-  }
 }
 
 async function executeArbitrageCheck(exA, exB) {
@@ -429,21 +296,16 @@ async function executeArbitrageCheck(exA, exB) {
                 exchangeFlag[exchangeAName.split('-')[0]] = true;
               }
             }
-            const batches = chunkify(pairs, 40);
+            const batches = chunkify(pairs, 10);
             for (const batch of batches) {
-              let batchA, batchB;
-              await Promise.all([
-                batchA = await filterPerDayVolume(exchangeA, batch),
-                batchB = await filterPerDayVolume(exchangeB, batch)
-              ]);
+              const batchA = await filterPerDayVolume(exchangeA, batch);
+              const batchB = await filterPerDayVolume(exchangeB, batch);
 
               if (batchA.length === 0 || batchB.length === 0) continue;
 
-              let orderBooksA, orderBooksB;
-              await Promise.all([
-                orderBooksA = await fetchOrderBooks(exchangeA, batchA, exchangeAName, exchangeBName, proxy),
-                orderBooksB = await fetchOrderBooks(exchangeB, batchB, exchangeBName, exchangeAName, proxy)
-              ]);              
+              const orderBooksA = await fetchOrderBooks(exchangeA, batchA, exchangeAName, exchangeBName, proxy);
+              const orderBooksB = await fetchOrderBooks(exchangeB, batchB, exchangeBName, exchangeAName, proxy);
+              
               const profits = calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName);
 
               for (const profit of profits) {
@@ -475,32 +337,192 @@ async function executeArbitrageCheck(exA, exB) {
   }
 }
 
-(async function main() {
-  console.log(`Starting the bot...`);
-  while (true) {
-    try {
-      const scriptStartTime = Date.now();
+// (async function main() {
+//   console.log(`Starting the bot...`);
+//   while (true) {
+//     try {
+//       const arbitragePromises = [];
+//       for (let i = 0; i < EXCHANGES.length; i++) {
+//         for (let j = i + 1; j < EXCHANGES.length; j++) {
+//           arbitragePromises.push(executeArbitrageCheck(EXCHANGES[i], EXCHANGES[j]));
+//         }
+//       }
+//       const scriptStartTime = Date.now();
+//       await Promise.all(arbitragePromises);
+//       console.log(`Cycle completed in ${(Date.now() - scriptStartTime) / 1000}s`);
+//       orderBookCache = {};
+//     } catch (err) {
+//       console.error("Error in main loop:", err.message);
+//     }
+//     await new Promise((resolve) => setTimeout(resolve, 1000));
+//   }
+// })();
 
-      // Calculations between Kucoin and other exchanges
-      const arbitrageKucoinPromises = [];
-      for (let i = 0; i < EXCHANGES.length; i++) {
-        arbitrageKucoinPromises.push(executeArbitrageKucoinCheck(EXCHANGES[i]));
-      }
-      await Promise.all(arbitrageKucoinPromises);
+if (isMainThread) {
+  (async function main() {
+    console.log(`Starting the bot...`);
 
-      // Calculations between other exchanges
-      for (let i = 0; i < EXCHANGES.length; i++) {
-        const arbitragePromises = [];
-        for (let j = i + 1; j < EXCHANGES.length; j++) {
-          arbitragePromises.push(executeArbitrageCheck(EXCHANGES[i], EXCHANGES[j]));
+    while (true) {
+      try {
+        const scriptStartTime = Date.now();
+
+        // Create worker threads for each arbitrage pair
+        const workers = [];
+        for (let i = 0; i < EXCHANGES.length; i++) {
+          for (let j = i + 1; j < EXCHANGES.length; j++) {
+            workers.push(
+              new Promise((resolve, reject) => {
+                const worker = new Worker(__filename, {
+                  workerData: { exchangeA: EXCHANGES[i], exchangeB: EXCHANGES[j] },
+                });
+
+                worker.on('message', resolve); // Resolve the promise when the worker finishes
+                worker.on('error', reject); // Reject the promise if the worker fails
+                worker.on('exit', (code) => {
+                  if (code !== 0) {
+                    reject(new Error(`Worker stopped with exit code ${code}`));
+                  }
+                });
+              })
+            );
+          }
         }
-        await Promise.all(arbitragePromises);
+
+        // Wait for all workers to finish
+        await Promise.all(workers);
+
+        console.log(`Cycle completed in ${(Date.now() - scriptStartTime) / 1000}s`);
+        orderBookCache = {};
+      } catch (err) {
+        console.error("Error in main loop:", err.message);
       }
-      console.log(`Total calculation completed in ${(Date.now() - scriptStartTime) / 1000}s`);
-      orderBookCache = {};
-    } catch (err) {
-      console.error("Error in main loop:", err.message);
+
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+  })();
+} else {
+  async function executeArbitrageCheck(exA, exB) {
+    const bot = new TelegramBot(TELEGRAM_API_KEY, { polling: false });
+    const exchangeA = exchanges[exA];
+    const exchangeB = exchanges[exB];
+  
+    try {
+      // Load markets for both exchanges
+      await Promise.all([exchangeA.loadMarkets(), exchangeB.loadMarkets()]);
+      
+      console.log("Loading markets...");
+  
+      // Fetch symbols
+      const exASpotSymbols = Object.keys(exchangeA.markets).filter(
+        (symbol) => symbol.endsWith('/USDT') && !symbol.includes(':')
+      );
+      const exAFutureSymbols = Object.keys(exchangeA.markets).filter(
+        (symbol) => symbol.includes('/USDT:')
+      );
+      const exBSpotSymbols = Object.keys(exchangeB.markets).filter(
+        (symbol) => symbol.endsWith('/USDT') && !symbol.includes(':')
+      );
+      const exBFutureSymbols = Object.keys(exchangeB.markets).filter(
+        (symbol) => symbol.includes('/USDT:')
+      );
+  
+      // Identify common trading pairs
+      const PairsExASExAF = exASpotSymbols.filter((spotSymbol) => {
+        const futureSymbol = spotSymbol.replace('/USDT', '/USDT:USDT');
+        return exAFutureSymbols.includes(futureSymbol);
+      });
+      const PairsExASExBF = exASpotSymbols.filter((spotSymbol) => {
+        const futureSymbol = spotSymbol.replace('/USDT', '/USDT:USDT');
+        return exBFutureSymbols.includes(futureSymbol);
+      });
+      const PairsExBSExBF = exBSpotSymbols.filter((spotSymbol) => {
+        const futureSymbol = spotSymbol.replace('/USDT', '/USDT:USDT');
+        return exBFutureSymbols.includes(futureSymbol);
+      });
+      const PairsExBSExAF = exBSpotSymbols.filter((spotSymbol) => {
+        const futureSymbol = spotSymbol.replace('/USDT', '/USDT:USDT');
+        return exAFutureSymbols.includes(futureSymbol);
+      });
+      const PairsExAFExBF = _.intersection(exAFutureSymbols, exBFutureSymbols);
+  
+      // Display common trading pairs
+      console.log(`Number of common trading pairs (${exA}-spot / ${exA}-futures): ${PairsExASExAF.length}`);
+      console.log(`Number of common trading pairs (${exA}-spot / ${exB}-futures): ${PairsExASExBF.length}`);
+      console.log(`Number of common trading pairs (${exB}-spot / ${exB}-futures): ${PairsExBSExBF.length}`);
+      console.log(`Number of common trading pairs (${exB}-spot / ${exA}-futures): ${PairsExBSExAF.length}`);
+      console.log(`Number of common trading pairs (${exA}-futures / ${exB}-futures): ${PairsExAFExBF.length}`);
+  
+      // Split each array into 10 parts
+      const numParts = 10;
+      const PairsExAFExBFChunks = chunkArray(PairsExAFExBF, numParts);
+      const PairsExASExAFChunks = chunkArray(PairsExASExAF, numParts);
+      const PairsExASExBFChunks = chunkArray(PairsExASExBF, numParts);
+      const PairsExBSExBFChunks = chunkArray(PairsExBSExBF, numParts);
+      const PairsExBSExAFChunks = chunkArray(PairsExBSExAF, numParts);
+  
+      // Create pairsToProcess with chunks
+      const pairsToProcess = [];
+      for (let i = 0; i < numParts; i++) {
+        pairsToProcess.push([
+          { pairs: PairsExAFExBFChunks[i], exchangeA: exchangeA, exchangeB: exchangeB, exchangeAName: `${exA}-FUTURE`, exchangeBName: `${exB}-FUTURE` },
+          { pairs: PairsExASExAFChunks[i], exchangeA: exchangeA, exchangeB: exchangeA, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exA}-FUTURE` },
+          { pairs: PairsExBSExBFChunks[i], exchangeA: exchangeB, exchangeB: exchangeB, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exB}-FUTURE` },
+          { pairs: PairsExASExBFChunks[i], exchangeA: exchangeA, exchangeB: exchangeB, exchangeAName: `${exA}-SPOT`, exchangeBName: `${exB}-FUTURE` },
+          { pairs: PairsExBSExAFChunks[i], exchangeA: exchangeB, exchangeB: exchangeA, exchangeAName: `${exB}-SPOT`, exchangeBName: `${exA}-FUTURE` }
+        ]);
+      }
+  
+      // Process all pairs
+      await Promise.all(
+        proxies.map(async (proxy, proxyIndex) => {
+          await Promise.all(
+            pairsToProcess[proxyIndex].map(async ({ pairs, exchangeA, exchangeB, exchangeAName, exchangeBName }) => {
+              if (exchangeAName.split('-')[0] === exchangeBName.split('-')[0]) {
+                if (exchangeFlag[exchangeAName.split('-')[0]]) {
+                  return;
+                } else {
+                  exchangeFlag[exchangeAName.split('-')[0]] = true;
+                }
+              }
+              const batches = chunkify(pairs, 10);
+              for (const batch of batches) {
+                const batchA = await filterPerDayVolume(exchangeA, batch);
+                const batchB = await filterPerDayVolume(exchangeB, batch);
+  
+                if (batchA.length === 0 || batchB.length === 0) continue;
+  
+                const orderBooksA = await fetchOrderBooks(exchangeA, batchA, exchangeAName, exchangeBName, proxy);
+                const orderBooksB = await fetchOrderBooks(exchangeB, batchB, exchangeBName, exchangeAName, proxy);
+                
+                const profits = calculateProfit(orderBooksA, orderBooksB, exchangeAName, exchangeBName);
+  
+                for (const profit of profits) {
+                  if (shouldNotifyOpportunity(profit.pair, profit.spread)) {
+                    const message = 
+                      `Coin: ${profit.pair}\n` +
+                      `Direction: ${profit.direction}\n` +
+                      `Spread: ${profit.spread.toFixed(2)}%\n` +
+                      `Buy Price: ${profit.buyPrice}\n` +
+                      `Sell Price: ${profit.sellPrice}\n` +
+                      `Max Volume: ${profit.maxVolume.toFixed(2)}\n` +
+                      `Potential Profit: ${profit.profit.toFixed(2)} USDT\n` +
+                      `Links:\n` +
+                      `- ${exchangeAName}: ${EXCHANGE_URLS[exchangeAName].replace('AAA', profit.pair.split('/')[0].toUpperCase()).replace(':USDT', '')}\n` +
+                      `- ${exchangeBName}: ${EXCHANGE_URLS[exchangeBName].replace('AAA', profit.pair.split('/')[0].toUpperCase()).replace(':USDT', '')}\n` +
+                      `------------------------------------------`
+                    ;
+                    await bot.sendMessage(TELEGRAM_CHAT_ID, message, { disable_web_page_preview: true });
+                    updateOpportunityBuffer(profit.pair, profit.spread);
+                  }
+                }
+              }
+            })
+          );
+        })
+      );
+    } catch (err) {
+      console.error(`An error occurred in arbitrage check for ${exA} and ${exB}:`, err.message);
+    }
   }
-})();
+  executeArbitrageCheck(workerData.exchangeA, workerData.exchangeB);
+}

@@ -1,8 +1,8 @@
 export const TELEGRAM_API_KEY = '7527533762:AAFL5xUrpYlSRGVBUg3rypxmDFJfr7ErU3g';
 export const TELEGRAM_CHAT_ID = '7273835466';
-export const MIN_SPREAD = 1;
+export const MIN_SPREAD = 1; // percent
 export const MIN_VOLUME = 100;
-export const BUFFER_EXPIRY_TIME = 5 * 60 * 1000;
+export const BUFFER_EXPIRY_TIME = 5 * 60 * 1000; // minutes
 export const ARBITRAGE_PERCENTAGE_THRESHOLD = 0.005;
 export const MAX_PROCESS_COUNT = 100;
 export const MIN_24_VOLUME = 0;
@@ -29,11 +29,13 @@ export const EXCHANGE_URLS = {
   'Bitget-FUTURE': 'https://www.bitget.com/futures/usdt/AAAUSDT', // BTCUSDT
   'Okx-SPOT': 'https://www.okx.com/trade-spot/AAA-USDT', // eth-usdt
   'Okx-FUTURE': 'https://www.okx.com/trade-swap/AAA-USDT-swap', // xrp-usdt-swap
+  'Kucoin-SPOT': 'https://www.kucoin.com/trade/AAA-USDT', // trx-usdt
+  'Kucoin-FUTURE': 'https://www.kucoin.com/trade/futures/AAAUSDTM', // trx-usdt
 };
 export const EXCHANGES = [
   'Gate',
   'Mexc',
   'Bybit',
   'Bitget',
-  'Okx'
+  'Okx',
 ]
